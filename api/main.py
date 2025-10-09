@@ -154,3 +154,59 @@ def _root2():
 @app.get("/health", include_in_schema=True)
 def _health2():
     return {"status": "ok"}
+
+# ---------- schema init ----------
+def init_db():
+    con = db()
+    cur = con.cursor()
+    cur.executescript("""
+    CREATE TABLE IF NOT EXISTS users(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        region TEXT NOT NULL,
+        stage TEXT NOT NULL,
+        sessions_per_week INTEGER NOT NULL,
+        hours_per_session REAL NOT NULL,
+        school_year_end TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS plans(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        subject_code TEXT NOT NULL,
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        hours_per_week REAL NOT NULL,
+        created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS modules(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        plan_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        summary TEXT,
+        est_minutes INTEGER NOT NULL,
+        order_index INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS module_items(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        module_id INTEGER NOT NULL,
+        objective TEXT NOT NULL,
+        success_criteria TEXT,
+        order_index INTEGER NOT NULL
+    );
+    """)
+    con.commit()
+    con.close()
+
+@app.on_event("startup")
+def _startup_init():
+    init_db()
+
+@app.get("/debug/tables")
+def _tables():
+    con = db()
+    rows = con.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
+    con.close()
+    return {"tables": [r["name"] for r in rows]}
