@@ -1,76 +1,50 @@
 from __future__ import annotations
-from pathlib import Path
 import json
-from typing import Any
+import os
+from typing import Dict, Any, List
 
-DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+def _read_json(path: str) -> dict:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
-def load_curriculum(region: str, year: str, subject_code: str) -> dict[str, Any]:
-    # Naming convention, tweak if needed
-    fname = f"{year}_{region}_{subject_code.title()}.json".replace(" ", "")
-    # e.g. Year8_Wales_Maths.json
-    path = DATA_DIR / fname
-    if not path.exists():
-        # fallback to your existing file layout for maths Wales Year 8
-        alt = DATA_DIR / "Year8_Wales_Maths.json"
-        if alt.exists():
-            path = alt
-        else:
-            raise FileNotFoundError(f"Missing curriculum spec {path}")
-    return json.loads(path.read_text())
+def load_curriculum(region: str, year: str, subject: str) -> dict:
+    region_key = region.strip().lower()
+    year_key = year.strip().lower().replace(" ", "")
+    subject_key = subject.strip().lower()
 
-# Fallback Curriculum class (safe dummy for compatibility)
-try:
-    from dataclasses import dataclass
-    @dataclass
-    class Curriculum:
-        subject: str
-        stage: str
-        region: str
-        modules: list
-except Exception:
-    pass
+    candidates: List[str] = []
 
-# --- Safe planner helper ---
-def to_plan_items(curr):
-    """
-    Build a flat list of plan items from a curriculum object or dict.
-    Accepts shapes like:
-      curr.modules = [ { "title": "...", "objectives": [ { "objective": "...", "success_criteria": "..." }, ... ] }, ... ]
-    or
-      { "modules": [...]} or { "topics": [...] }
-    Returns a list of dicts with keys: title, objective, module, success_criteria
-    """
+    # explicit new folder form
+    candidates.append(os.path.join("src", "agi_tutor", "curriculums", f"{subject_key}_{year_key}_{region_key}.json"))
+    candidates.append(os.path.join("src", "agi_tutor", "curriculums", f"{subject_key}_{year_key}.json"))
+    candidates.append(os.path.join("src", "agi_tutor", "curriculums", f"{subject_key}.json"))
+
+    # legacy single file that you had earlier
+    # e.g. data/Year8_Wales_Maths.json
+    legacy = os.path.join("data", f"{year.replace(' ', '')}_{region}_{subject.capitalize()}.json")
+    candidates.append(legacy)
+
+    for p in candidates:
+        if os.path.isfile(p):
+            return _read_json(p)
+
+    # graceful fallback so API does not 500
+    return {
+        "subject": subject,
+        "stage": year,
+        "region": region,
+        "objectives": [
+            {"name": "Placeholder Objective 1", "success": ["Understand key idea"]},
+            {"name": "Placeholder Objective 2", "success": ["Practise simple problems"]}
+        ]
+    }
+
+def to_plan_items(spec: Dict[str, Any]) -> List[Dict[str, Any]]:
     items = []
-
-    # accept either dataclass-like object or plain dict
-    modules = getattr(curr, "modules", None)
-    if modules is None and isinstance(curr, dict):
-        modules = curr.get("modules") or curr.get("topics") or []
-
-    for mod in modules or []:
-        # mod may be dict or object
-        mod_title = None
-        if isinstance(mod, dict):
-            mod_title = mod.get("title") or mod.get("name") or "Module"
-            objectives = mod.get("objectives") or mod.get("items") or []
-        else:
-            mod_title = getattr(mod, "title", None) or getattr(mod, "name", None) or "Module"
-            objectives = getattr(mod, "objectives", None) or getattr(mod, "items", None) or []
-
-        for obj in objectives:
-            if isinstance(obj, dict):
-                objective = obj.get("objective") or obj.get("name") or obj.get("title") or str(obj)
-                success = obj.get("success_criteria") or obj.get("success") or None
-            else:
-                objective = str(obj)
-                success = None
-
-            items.append({
-                "title": f"{mod_title} — {objective}",
-                "objective": objective,
-                "module": mod_title,
-                "success_criteria": success
-            })
-
+    for idx, o in enumerate(spec.get("objectives", []), start=1):
+        items.append({
+            "order": idx,
+            "objective": o.get("name", f"Objective {idx}"),
+            "success_criteria": ", ".join(o.get("success", []))
+        })
     return items

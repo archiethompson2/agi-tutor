@@ -1,0 +1,13 @@
+{
+  "subject": "maths",
+  "stage": "Year 8",
+  "region": "Wales",
+  "objectives": [
+    { "name": "Fractions to decimals", "success": ["Divide numerator by denominator", "Round sensibly"] },
+    { "name": "Decimals to percentages", "success": ["Multiply by 100", "Add % symbol"] },
+    { "name": "Simplifying fractions", "success": ["Find highest common factor", "Divide top and bottom"] },
+    { "name": "Averages and range", "success": ["Mean, median, mode", "Range = max - min"] },
+    { "name": "Linear equations one step", "success": ["Inverse operations", "Balance both sides"] },
+    { "name": "Linear equations two steps", "success": ["Collect like terms", "Solve for x"] }
+  ]
+}
