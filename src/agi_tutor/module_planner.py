@@ -1,11 +1,7 @@
 from __future__ import annotations
-def get_obj_list(spec):
-    return (spec.get("objectives") or spec.get("items") or spec.get("topics") or [])
-from datetime import date, timedelta
+from datetime import date
 from typing import Any, List
-import math
-import json
-import os
+import math, json
 
 from agi_tutor.curriculum import load_curriculum
 from agi_tutor.agi_agent import call_model
@@ -20,9 +16,29 @@ SYSTEM = (
 def weeks_between(start: date, end: date) -> int:
     return max(1, ((end - start).days + 6) // 7)
 
+def _get_obj_list(spec: dict) -> list:
+    return spec.get("objectives") or spec.get("items") or spec.get("topics") or []
+
+def _fallback_modules(objs: list[dict], weeks: int) -> dict[str, Any]:
+    per = max(1, math.ceil(len(objs) / max(1, weeks)))
+    modules: list[dict[str, Any]] = []
+    for i in range(0, len(objs), per):
+        chunk = objs[i:i+per]
+        modules.append({
+            "title": f"Module {len(modules)+1}",
+            "summary": f"Auto chunk from {chunk[0]['name']} to {chunk[-1]['name']}",
+            "est_minutes": 45,
+            "items": [
+                {"objective": o["name"], "success_criteria": ", ".join(o.get("success", []))}
+                for o in chunk
+            ]
+        })
+    return {"modules": modules}
+
 def make_plan(name: str, region: str, year: str, subject: str,
               hours_per_week: float, start: date, end: date) -> dict[str, Any]:
     spec = load_curriculum(region, year, subject)
+    objs = _get_obj_list(spec)
     weeks = weeks_between(start, end)
     total_minutes = int(hours_per_week * 60 * weeks)
 
@@ -30,31 +46,26 @@ def make_plan(name: str, region: str, year: str, subject: str,
         "student": {"name": name, "region": region, "year": year},
         "subject": subject,
         "timebox": {"weeks": weeks, "hours_per_week": hours_per_week, "total_minutes": total_minutes},
-        "objectives": get_obj_list(spec)
+        "objectives": [
+            {"objective": o.get("name"), "success_criteria": ", ".join(o.get("success", []))}
+            for o in objs
+        ]
     }
 
-    messages = [
-        {"role": "system", "content": SYSTEM},
-        {"role": "user", "content": json.dumps(user)}
-    ]
-    out = call_model(messages)
-    # Try to parse model response
+    # Try model plan, then parse, otherwise fall back deterministically
     try:
-        start = out.find("{")
-        endi = out.rfind("}")
-        payload = json.loads(out[start:endi+1])
-        return payload
+        messages = [
+            {"role": "system", "content": SYSTEM},
+            {"role": "user", "content": json.dumps(user)}
+        ]
+        out = call_model(messages)  # may raise if no OPENAI_API_KEY on Render
+        start_i = out.find("{")
+        end_i = out.rfind("}")
+        if start_i != -1 and end_i != -1:
+            payload = json.loads(out[start_i:end_i+1])
+            if isinstance(payload, dict) and "modules" in payload:
+                return payload
     except Exception:
-        # Fallback simple split if the model output is not parseable
-        objs = get_obj_list(spec)
-        per = max(1, math.ceil(len(objs) / max(1, weeks)))
-        modules = []
-        for i in range(0, len(objs), per):
-            chunk = objs[i:i+per]
-            modules.append({
-                "title": f"Module {len(modules)+1}",
-                "summary": f"Auto chunk from {chunk[0]['name']} to {chunk[-1]['name']}",
-                "est_minutes": 45,
-                "items": [{"objective": o["name"], "success_criteria": ", ".join(o.get("success", []))} for o in chunk]
-            })
-        return {"modules": modules}
+        pass
+
+    return _fallback_modules(objs, weeks)

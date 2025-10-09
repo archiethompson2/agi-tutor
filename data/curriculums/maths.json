@@ -1,0 +1,13 @@
+{
+  "subject": "maths",
+  "stage": "Year 8",
+  "region": "Wales",
+  "objectives": [
+    {"name": "Fractions to decimals", "success": ["divide numerator by denominator"]},
+    {"name": "Decimals to percentages", "success": ["multiply by 100"]},
+    {"name": "Mean, median and mode", "success": ["choose the correct operation"]},
+    {"name": "Range", "success": ["max minus min"]},
+    {"name": "One step equations", "success": ["inverse operations"]},
+    {"name": "Two step equations", "success": ["keep balance on both sides"]}
+  ]
+}
