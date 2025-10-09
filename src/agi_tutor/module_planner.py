@@ -1,3 +1,6 @@
+def get_obj_list(spec):
+    return (spec.get("objectives") or spec.get("items") or spec.get("topics") or [])
+
 from __future__ import annotations
 from datetime import date, timedelta
 from typing import Any, List
@@ -28,7 +31,7 @@ def make_plan(name: str, region: str, year: str, subject: str,
         "student": {"name": name, "region": region, "year": year},
         "subject": subject,
         "timebox": {"weeks": weeks, "hours_per_week": hours_per_week, "total_minutes": total_minutes},
-        "objectives": spec["objectives"]
+        "objectives": get_obj_list(spec)
     }
 
     messages = [
@@ -44,7 +47,7 @@ def make_plan(name: str, region: str, year: str, subject: str,
         return payload
     except Exception:
         # Fallback simple split if the model output is not parseable
-        objs = spec["objectives"]
+        objs = get_obj_list(spec)
         per = max(1, math.ceil(len(objs) / max(1, weeks)))
         modules = []
         for i in range(0, len(objs), per):
