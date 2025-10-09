@@ -1,0 +1,51 @@
+{
+  "stage": "Year8",
+  "region": "Wales",
+  "subject": "Maths",
+  "topics": [
+    {
+      "code": "Y8-NUM-1",
+      "name": "Fractions, decimals and percentages",
+      "prerequisites": [],
+      "sessions": 3
+    },
+    {
+      "code": "Y8-ALG-1",
+      "name": "Expressions and simplifying",
+      "prerequisites": [],
+      "sessions": 2
+    },
+    {
+      "code": "Y8-GEO-2",
+      "name": "Pythagoras’ Theorem",
+      "prerequisites": [
+        "Y8-NUM-1"
+      ],
+      "sessions": 3
+    },
+    {
+      "code": "Y8-ALG-2",
+      "name": "Linear equations",
+      "prerequisites": [
+        "Y8-ALG-1"
+      ],
+      "sessions": 3
+    },
+    {
+      "code": "Y8-DATA-1",
+      "name": "Averages and range",
+      "prerequisites": [
+        "Y8-NUM-1"
+      ],
+      "sessions": 2
+    },
+    {
+      "code": "Y8-GEO-3",
+      "name": "Area of circles",
+      "prerequisites": [
+        "Y8-NUM-1"
+      ],
+      "sessions": 2
+    }
+  ]
+}
