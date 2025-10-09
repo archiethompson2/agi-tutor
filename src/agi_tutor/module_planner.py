@@ -1,7 +1,6 @@
+from __future__ import annotations
 def get_obj_list(spec):
     return (spec.get("objectives") or spec.get("items") or spec.get("topics") or [])
-
-from __future__ import annotations
 from datetime import date, timedelta
 from typing import Any, List
 import math
