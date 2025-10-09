@@ -210,3 +210,10 @@ def _tables():
     rows = con.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
     con.close()
     return {"tables": [r["name"] for r in rows]}
+
+# temporary reset route
+@app.post("/admin/reset-db")
+def admin_reset_db():
+    from agi_tutor.reset_db import reset
+    reset()
+    return {"ok": True, "note": "DB reset"}
