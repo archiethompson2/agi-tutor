@@ -18,3 +18,15 @@ def load_curriculum(region: str, year: str, subject_code: str) -> dict[str, Any]
         else:
             raise FileNotFoundError(f"Missing curriculum spec {path}")
     return json.loads(path.read_text())
+
+# Fallback Curriculum class (safe dummy for compatibility)
+try:
+    from dataclasses import dataclass
+    @dataclass
+    class Curriculum:
+        subject: str
+        stage: str
+        region: str
+        modules: list
+except Exception:
+    pass

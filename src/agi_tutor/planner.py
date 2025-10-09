@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Dict, Any, List
 import json
-from .curriculum import Curriculum, to_plan_items
+from .curriculum import to_plan_items
 from .db import execute, fetchone
 from .config import settings
 
