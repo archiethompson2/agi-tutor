@@ -145,3 +145,12 @@ def health():
     return {"status": "ok"}
 
 app.include_router(router)
+
+# --- direct routes for Render health checks ---
+@app.get("/", include_in_schema=True)
+def _root2():
+    return {"ok": True, "service": "agi-tutor-api"}
+
+@app.get("/health", include_in_schema=True)
+def _health2():
+    return {"status": "ok"}
