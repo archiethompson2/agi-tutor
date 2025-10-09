@@ -130,3 +130,18 @@ def session_start(s: StartSession):
             "items": [dict(i) for i in items]
         }
     }
+
+# --- Health + Root routes for Render ---
+from fastapi import APIRouter
+
+router = APIRouter()
+
+@router.get("/")
+def root():
+    return {"ok": True, "service": "agi-tutor-api"}
+
+@router.get("/health")
+def health():
+    return {"status": "ok"}
+
+app.include_router(router)
