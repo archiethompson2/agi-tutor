@@ -1,0 +1,8 @@
+.venv/
+.env
+tutor.db
+backups/
+__pycache__/
+*.pyc
+.streamlit/
+.DS_Store
