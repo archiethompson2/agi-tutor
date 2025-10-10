@@ -255,3 +255,10 @@ def migrate_lite():
     cols = [r["name"] for r in con.execute("PRAGMA table_info(plans)").fetchall()]
     con.close()
     return {"ok": True, "plans_columns": cols}
+
+# temporary reset route
+@app.post("/admin/reset-db")
+def admin_reset_db():
+    from agi_tutor.reset_db import reset
+    reset()
+    return {"ok": True, "note": "DB reset"}
