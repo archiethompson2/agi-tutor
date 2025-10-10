@@ -295,3 +295,47 @@ def db():
     con = sqlite3.connect(db_path, check_same_thread=False)
     con.row_factory = sqlite3.Row
     return con
+
+# --- robust SQLite path resolver with fallbacks ---
+import os, sqlite3, pathlib
+
+def _resolve_sqlite_path():
+    url = os.getenv("DATABASE_URL", "")
+    # Accept forms like sqlite:////absolute/path.db or sqlite:///relative.db
+    if url.startswith("sqlite:///"):
+        p = url[len("sqlite:///"):]
+        return p if p.startswith("/") else f"/opt/render/project/src/{p}"
+    elif url.startswith("sqlite://"):
+        p = url[len("sqlite://"):]
+        return p if p.startswith("/") else f"/opt/render/project/src/{p}"
+    # If a Render Disk path is provided explicitly
+    disk_path = os.getenv("RENDER_DISK_PATH", "")
+    if disk_path:
+        return disk_path
+    # Default to a writable project-local dir (persists across restarts on same instance;
+    # for true persistence use a Render Disk and set DATABASE_URL)
+    return "/opt/render/project/src/.data/agi_tutor.db"
+
+def db():
+    # Try env-provided path first
+    candidates = []
+    primary = _resolve_sqlite_path()
+    candidates.append(primary)
+    # If primary is under /var/data and not writable, fallback to project dir
+    if primary.startswith("/var/"):
+        candidates.append("/opt/render/project/src/.data/agi_tutor.db")
+    # Always include /tmp as last-resort
+    candidates.append("/tmp/agi_tutor.db")
+
+    last_err = None
+    for path in candidates:
+        try:
+            pathlib.Path(path).parent.mkdir(parents=True, exist_ok=True)
+            con = sqlite3.connect(path, check_same_thread=False)
+            con.row_factory = sqlite3.Row
+            # print(f"[agi-tutor] Using DB at: {path}")  # optional: enable for debugging
+            return con
+        except Exception as e:
+            last_err = e
+            continue
+    raise RuntimeError(f"Failed to open SQLite DB. Last error: {last_err}")
