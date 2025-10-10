@@ -211,3 +211,71 @@ def _tables():
     con.close()
     return {"tables": [r["name"] for r in rows]}
 
+
+# --- startup schema guard: keeps tables/columns present across restarts ---
+def _col_exists(con, table: str, col: str) -> bool:
+    rows = con.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(r["name"] == col for r in rows)
+
+def ensure_schema():
+    con = db()
+    cur = con.cursor()
+
+    # base tables
+    cur.executescript("""
+    CREATE TABLE IF NOT EXISTS users(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        region TEXT,
+        stage TEXT,
+        hours_per_session REAL,
+        sessions_per_week INTEGER,
+        school_year_end TEXT
+    );
+    CREATE TABLE IF NOT EXISTS plans(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        start_date TEXT,
+        end_date TEXT
+    );
+    """)
+    # add columns that newer code expects; no-ops if they already exist
+    if not _col_exists(con, "plans", "subject_code"):
+        cur.execute("ALTER TABLE plans ADD COLUMN subject_code TEXT")
+    if not _col_exists(con, "plans", "hours_per_week"):
+        cur.execute("ALTER TABLE plans ADD COLUMN hours_per_week REAL")
+    if not _col_exists(con, "plans", "created_at"):
+        cur.execute("ALTER TABLE plans ADD COLUMN created_at TEXT")
+    # legacy/optional columns used by planner implementations
+    for extra_col in ("curriculum_path","generated_on","total_sessions","plan_json"):
+        if not _col_exists(con, "plans", extra_col):
+            cur.execute(f"ALTER TABLE plans ADD COLUMN {extra_col} TEXT")
+
+    cur.executescript("""
+    CREATE TABLE IF NOT EXISTS modules(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        plan_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        summary TEXT,
+        est_minutes INTEGER NOT NULL,
+        order_index INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS module_items(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        module_id INTEGER NOT NULL,
+        objective TEXT NOT NULL,
+        success_criteria TEXT,
+        order_index INTEGER NOT NULL
+    );
+    """)
+    con.commit()
+    con.close()
+
+# FastAPI startup hook
+@app.on_event("startup")
+def _startup_ensure_schema():
+    try:
+        ensure_schema()
+    except Exception as e:
+        # log but don't crash startup; handlers may still be callable
+        print("ensure_schema failed:", e)
