@@ -279,3 +279,19 @@ def _startup_ensure_schema():
     except Exception as e:
         # log but don't crash startup; handlers may still be callable
         print("ensure_schema failed:", e)
+
+# --- persistent SQLite path (overrides any prior db() definition) ---
+import os, sqlite3, pathlib
+
+def db():
+    url = os.getenv("DATABASE_URL", "sqlite:////var/data/agi_tutor.db")
+    if url.startswith("sqlite:///"):
+        db_path = url[len("sqlite:///"):]
+    elif url.startswith("sqlite://"):
+        db_path = url[len("sqlite://"):]
+    else:
+        db_path = "/var/data/agi_tutor.db"
+    pathlib.Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(db_path, check_same_thread=False)
+    con.row_factory = sqlite3.Row
+    return con
