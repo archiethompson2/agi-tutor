@@ -1,3 +1,106 @@
+# === API_MODE (activate with ?api=1) ==========================================
+# This block lets the main app call the live FastAPI backend when you open:
+#   https://agi-tutor-1.onrender.com/?api=1
+# It is isolated and won't affect normal behavior without ?api=1.
+try:
+    import os, json, requests, streamlit as st  # noqa: F401
+    _qp = st.query_params if hasattr(st, "query_params") else {}
+    _api_mode = (_qp.get("api", ["0"])[0] == "1")
+except Exception:
+    _api_mode = False
+
+if _api_mode:
+    import os, json, requests, streamlit as st
+
+    API = os.getenv("AGI_TUTOR_API_BASE", "https://agi-tutor.onrender.com")
+    st.set_page_config(page_title="AGI Tutor • Backend mode", layout="wide")
+    st.title("AGI Tutor • Backend mode")
+
+    # --- helpers --------------------------------------------------------------
+    def api_signup(name, region, stage, hps, spw, sye):
+        r = requests.post(f"{API}/signup", json={
+            "name": name, "region": region, "stage": stage,
+            "hours_per_session": hps, "sessions_per_week": spw,
+            "school_year_end": sye
+        }, timeout=20); r.raise_for_status(); return r.json()["user_id"]
+
+    def api_plan(uid, subject_code, hpw, spw, start_date, end_date):
+        r = requests.post(f"{API}/plan", json={
+            "user_id": uid, "subject_code": subject_code,
+            "hours_per_week": hpw, "sessions_per_week": spw,
+            "start_date": start_date, "end_date": end_date
+        }, timeout=30); r.raise_for_status(); return r.json()
+
+    def api_modules(uid, subject_code):
+        r = requests.get(f"{API}/modules", params={
+            "user_id": uid, "subject_code": subject_code
+        }, timeout=20); r.raise_for_status(); return r.json().get("modules", [])
+
+    def api_session_start(uid, module_id):
+        r = requests.post(f"{API}/session/start", json={
+            "user_id": uid, "module_id": module_id
+        }, timeout=20); r.raise_for_status(); return r.json()
+
+    # --- query params with defaults ------------------------------------------
+    qp = st.query_params
+    name = qp.get("name", ["Archie"])[0]
+    region = qp.get("region", ["Wales"])[0]
+    stage = qp.get("stage", ["Year 8"])[0]
+    subject_code = qp.get("subject_code", ["maths"])[0]
+    hpw = float(qp.get("hours_per_week", [2])[0])
+    spw = int(qp.get("sessions_per_week", [2])[0])
+    start_date = qp.get("start_date", ["2025-09-01"])[0]
+    end_date = qp.get("end_date", ["2026-06-30"])[0]
+
+    with st.sidebar:
+        st.header("Learner")
+        name = st.text_input("Name", name)
+        region = st.text_input("Region", region)
+        stage = st.text_input("Stage", stage)
+        st.caption(f"Subject: {subject_code} · HPW: {hpw} · SPW: {spw}")
+        st.caption(f"{start_date} → {end_date}")
+
+    col1, col2 = st.columns([2,3])
+
+    with col1:
+        st.subheader("Create / ensure")
+        if "user_id" not in st.session_state:
+            # allow pre-supplied uid via ?user_id=
+            st.session_state.user_id = int(qp.get("user_id", [0])[0])
+
+        if st.button("Create user") or st.session_state.user_id == 0:
+            st.session_state.user_id = api_signup(name, region, stage, 1.0, spw, end_date)
+            st.query_params["user_id"] = str(st.session_state.user_id)
+        st.success(f"user_id = {st.session_state.user_id}")
+
+        if st.button("Ensure plan"):
+            api_plan(st.session_state.user_id, subject_code, hpw, spw, start_date, end_date)
+            st.success("Plan ensured")
+
+    with col2:
+        st.subheader("Modules")
+        try:
+            mods = api_modules(st.session_state.user_id, subject_code)
+        except Exception as e:
+            st.error(f"fetch modules failed: {e}")
+            mods = []
+
+        if not mods:
+            st.info("No modules yet. Click Ensure plan.")
+            st.stop()
+
+        titles = [m["title"] for m in mods]
+        idx = st.selectbox("Pick a module", list(range(len(mods))), format_func=lambda i: titles[i])
+        picked = mods[idx]
+        st.json(picked)
+
+        if st.button("Start session"):
+            sess = api_session_start(st.session_state.user_id, picked["id"])
+            st.success("Session payload")
+            st.json(sess)
+            st.caption("This is your module/session JSON from the backend.")
+    st.stop()
+# === end API_MODE ============================================================
 import sys
 import base64
 from datetime import datetime
