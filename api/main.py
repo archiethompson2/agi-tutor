@@ -211,3 +211,47 @@ def _tables():
     con.close()
     return {"tables": [r["name"] for r in rows]}
 
+
+# --- one-off lite migration for Render DB ---
+def _col_exists(con, table: str, col: str) -> bool:
+    rows = con.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(r["name"] == col for r in rows)
+
+@app.post("/admin/migrate-lite")
+def migrate_lite():
+    con = db()
+    cur = con.cursor()
+
+    # add missing plan columns (no-op if they already exist)
+    if not _col_exists(con, "plans", "subject_code"):
+        cur.execute("ALTER TABLE plans ADD COLUMN subject_code TEXT")
+    if not _col_exists(con, "plans", "hours_per_week"):
+        cur.execute("ALTER TABLE plans ADD COLUMN hours_per_week REAL")
+    if not _col_exists(con, "plans", "created_at"):
+        cur.execute("ALTER TABLE plans ADD COLUMN created_at TEXT")
+
+    # create module tables if missing (matches init_db schema)
+    cur.executescript("""
+    CREATE TABLE IF NOT EXISTS modules(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        plan_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        summary TEXT,
+        est_minutes INTEGER NOT NULL,
+        order_index INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS module_items(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        module_id INTEGER NOT NULL,
+        objective TEXT NOT NULL,
+        success_criteria TEXT,
+        order_index INTEGER NOT NULL
+    );
+    """)
+
+    con.commit()
+
+    # return current plans columns for proof
+    cols = [r["name"] for r in con.execute("PRAGMA table_info(plans)").fetchall()]
+    con.close()
+    return {"ok": True, "plans_columns": cols}
