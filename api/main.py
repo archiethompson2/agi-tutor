@@ -1,5 +1,14 @@
 from __future__ import annotations
 from datetime import date, datetime
+
+from fastapi import HTTPException
+def _parse_iso(d: str, field: str):
+    try:
+        return date.fromisoformat(str(d))
+    except Exception:
+        raise HTTPException(status_code=422, detail={
+            "error": f"Invalid date for {field}", "value": d
+        })
 from typing import List, Optional
 import sqlite3
 from fastapi import FastAPI, HTTPException
@@ -53,8 +62,8 @@ def signup(s: Signup):
 @app.post("/plan")
 def create_plan(p: PlanRequest):
     # build plan via module planner
-    start = date.fromisoformat(p.start_date)
-    end = date.fromisoformat(p.end_date)
+    start = _parse_iso(p.start_date, 'start_date')
+    end = _parse_iso(p.end_date, 'end_date')
     # look up user for region and year
     con = db()
     u = con.execute("SELECT * FROM users WHERE id=?", (p.user_id,)).fetchone()
