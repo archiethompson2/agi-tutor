@@ -1,8 +1,9 @@
 import os, json, requests, streamlit as st
 
 API = os.getenv("AGI_TUTOR_API_BASE", "https://agi-tutor.onrender.com")
-BUILD_TAG = "UI-build: 2025-10-16-12:05Z"
+BUILD_TAG = "UI-build: 2025-10-16-12:20Z"
 
+# Optional: import the tutor agent for chat handoff
 try:
     from agi_tutor.agi_agent import build_system_prompt, call_model  # type: ignore
 except Exception:
@@ -11,6 +12,7 @@ except Exception:
 
 st.set_page_config(page_title=f"AGI Tutor • {BUILD_TAG}", layout="wide")
 
+# Query param helper
 try:
     qp = st.query_params
 except Exception:
@@ -24,6 +26,7 @@ def qget(name: str, default: str) -> str:
 
 API_MODE = qget("api", "0") == "1"
 
+# ------------------- Backend calls -------------------
 def api_signup(name, region, stage, hours_per_session, sessions_per_week, school_year_end):
     payload = {
         "name": name,
@@ -59,31 +62,37 @@ def api_session_start(user_id, module_id):
     r.raise_for_status()
     return r.json()
 
+# ------------------- API mode UI -------------------
 if API_MODE:
-    st.title(f"AGI Tutor • Backend mode · {BUILD_TAG}")
+    st.title(f"AGI Tutor • Backend mode • {BUILD_TAG}")
 
-    name = qget("name", "Archie")
-    region = qget("region", "Wales")
-    stage = qget("stage", "Year 8")
-    subject_code = qget("subject_code", "maths")
-    hpw = float(qget("hours_per_week", "2"))
-    spw = int(qget("sessions_per_week", "2"))
-    start_date = qget("start_date", "2025-09-01")
-    end_date = qget("end_date", "2026-06-30")
-    autostart = qget("autostart", "0") == "1"
+    # Read from query string but expose REAL inputs to avoid bad values
+    default_subject = qget("subject_code", "maths")
+    default_hpw = float(qget("hours_per_week", "2"))
+    default_spw = int(qget("sessions_per_week", "2"))
+    default_start = qget("start_date", "2025-09-01")
+    default_end = qget("end_date", "2026-06-30")
+    default_name = qget("name", "Archie")
+    default_region = qget("region", "Wales")
+    default_stage = qget("stage", "Year 8")
 
     with st.sidebar:
         st.header("Learner")
-        name = st.text_input("Name", name)
-        region = st.text_input("Region", region)
-        stage = st.text_input("Stage", stage)
-        st.caption(f"Subject: {subject_code} · HPW: {hpw} · SPW: {spw}")
-        st.caption(f"{start_date} → {end_date}")
+        name = st.text_input("Name", default_name)
+        region = st.text_input("Region", default_region)
+        stage = st.text_input("Stage", default_stage)
+
+        subject_code = st.selectbox("Subject", ["maths"], index=0 if default_subject == "maths" else 0)
+        hpw = st.number_input("Hours per week", min_value=0.5, max_value=20.0, step=0.5, value=float(default_hpw))
+        spw = st.number_input("Sessions per week", min_value=1, max_value=14, step=1, value=int(default_spw))
+        start_date = st.text_input("Start date (YYYY-MM-DD)", default_start)
+        end_date = st.text_input("End date (YYYY-MM-DD)", default_end)
 
     col1, col2 = st.columns([2, 3])
 
     with col1:
         st.subheader("Create / ensure")
+
         if "user_id" not in st.session_state:
             try:
                 st.session_state.user_id = int(qp.get("user_id", [0])[0])
@@ -94,7 +103,7 @@ if API_MODE:
             try:
                 st.session_state.user_id = api_signup(
                     name=name, region=region, stage=stage,
-                    hours_per_session=1.0, sessions_per_week=spw, school_year_end=end_date
+                    hours_per_session=1.0, sessions_per_week=int(spw), school_year_end=end_date
                 )
                 st.query_params["user_id"] = str(st.session_state.user_id)
                 st.success(f"user_id = {st.session_state.user_id}")
@@ -102,16 +111,19 @@ if API_MODE:
                 st.error(f"/signup failed: {e.response.text}")
                 st.stop()
 
+        plan_payload = {
+            "user_id": int(st.session_state.user_id or 0),
+            "subject_code": subject_code,
+            "hours_per_week": float(hpw),
+            "start_date": start_date,
+            "end_date": end_date,
+        }
+        with st.expander("Plan payload (what will be POSTed to /plan)"):
+            st.json(plan_payload)
+
         if st.button("Ensure plan"):
             try:
-                # KEY: keyword args avoid any positional mixups
-                api_plan(
-                    user_id=st.session_state.user_id,
-                    subject_code=subject_code,
-                    hours_per_week=hpw,
-                    start_date=start_date,
-                    end_date=end_date,
-                )
+                api_plan(**plan_payload)
                 st.success("Plan ensured")
             except requests.HTTPError as e:
                 st.error(f"/plan failed: {e.response.text}")
@@ -135,8 +147,8 @@ if API_MODE:
         with st.expander("Selected module payload"):
             st.json(picked)
 
-        start_now = autostart or st.button("Start session")
-        if start_now:
+        autostart = qget("autostart", "0") == "1"
+        if autostart or st.button("Start session"):
             try:
                 sess = api_session_start(user_id=st.session_state.user_id, module_id=picked["id"])
             except requests.HTTPError as e:
@@ -152,7 +164,7 @@ if API_MODE:
                 items = module.get("items", [])
                 context = {
                     "student": {"name": name, "region": region, "stage": stage},
-                    "time": {"sessions_per_week": spw, "hours_per_session": 1.0, "school_year_end": end_date},
+                    "time": {"sessions_per_week": int(spw), "hours_per_session": 1.0, "school_year_end": end_date},
                     "curriculum_topic": module.get("title", subject_code),
                     "must_cover": items,
                 }
@@ -168,10 +180,8 @@ if API_MODE:
             st.divider()
             st.subheader("Tutor session")
             for m in st.session_state.api_messages:
-                if m["role"] == "assistant":
-                    st.chat_message("assistant").write(m["content"])
-                elif m["role"] == "user":
-                    st.chat_message("user").write(m["content"])
+                st.chat_message(m["role"]).write(m["content"])
+
             user_msg = st.chat_input("Type your answer or question")
             if user_msg:
                 st.session_state.api_messages.append({"role": "user", "content": user_msg})
@@ -181,6 +191,7 @@ if API_MODE:
 
     st.stop()
 
-st.title(f"AGI Tutor (local demo) · {BUILD_TAG}")
+# -------- Local demo fallback --------
+st.title(f"AGI Tutor (local demo) • {BUILD_TAG}")
 st.info("Run this app with query string `?api=1` to use the backend service.")
 st.write("Example: `.../app?api=1&subject_code=maths&hours_per_week=2&sessions_per_week=2&autostart=1`")
