@@ -1,17 +1,16 @@
 import os, json, requests, streamlit as st
 
 API = os.getenv("AGI_TUTOR_API_BASE", "https://agi-tutor.onrender.com")
+BUILD_TAG = "UI-build: 2025-10-16-12:05Z"
 
-# Try to import the tutor agent. If it's missing, we still show API payloads.
 try:
     from agi_tutor.agi_agent import build_system_prompt, call_model  # type: ignore
 except Exception:
     build_system_prompt = None
     call_model = None
 
-st.set_page_config(page_title="AGI Tutor", layout="wide")
+st.set_page_config(page_title=f"AGI Tutor • {BUILD_TAG}", layout="wide")
 
-# Query params helper (Streamlit >=1.32 has st.query_params)
 try:
     qp = st.query_params
 except Exception:
@@ -25,9 +24,7 @@ def qget(name: str, default: str) -> str:
 
 API_MODE = qget("api", "0") == "1"
 
-# ---------- Backend calls ----------
 def api_signup(name, region, stage, hours_per_session, sessions_per_week, school_year_end):
-    # NOTE: backend expects 'school_year_end' (not 'target_term_end')
     payload = {
         "name": name,
         "region": region,
@@ -41,7 +38,6 @@ def api_signup(name, region, stage, hours_per_session, sessions_per_week, school
     return int(r.json()["user_id"])
 
 def api_plan(user_id, subject_code, hours_per_week, start_date, end_date):
-    # NOTE: PlanRequest does NOT include 'sessions_per_week'
     payload = {
         "user_id": user_id,
         "subject_code": subject_code,
@@ -63,11 +59,9 @@ def api_session_start(user_id, module_id):
     r.raise_for_status()
     return r.json()
 
-# ---------- API mode UI ----------
 if API_MODE:
-    st.title("AGI Tutor • Backend mode")
+    st.title(f"AGI Tutor • Backend mode · {BUILD_TAG}")
 
-    # Defaults so the page is usable from a bare URL
     name = qget("name", "Archie")
     region = qget("region", "Wales")
     stage = qget("stage", "Year 8")
@@ -110,6 +104,7 @@ if API_MODE:
 
         if st.button("Ensure plan"):
             try:
+                # KEY: keyword args avoid any positional mixups
                 api_plan(
                     user_id=st.session_state.user_id,
                     subject_code=subject_code,
@@ -152,7 +147,6 @@ if API_MODE:
             st.json(sess)
             st.caption("This is your module/session JSON from the backend.")
 
-            # Optional: boot the chat using your tutor agent if available
             if build_system_prompt and call_model:
                 module = sess.get("module", {})
                 items = module.get("items", [])
@@ -170,7 +164,6 @@ if API_MODE:
                 first = call_model(st.session_state.api_messages)
                 st.session_state.api_messages.append({"role": "assistant", "content": first})
 
-        # Conversation UI (only if the agent imported correctly)
         if "api_messages" in st.session_state and st.session_state.api_messages and call_model:
             st.divider()
             st.subheader("Tutor session")
@@ -186,10 +179,8 @@ if API_MODE:
                 st.session_state.api_messages.append({"role": "assistant", "content": reply})
                 st.rerun()
 
-    # In API mode, we're done here.
     st.stop()
 
-# ---------- Local demo fallback ----------
-st.title("AGI Tutor (local demo)")
+st.title(f"AGI Tutor (local demo) · {BUILD_TAG}")
 st.info("Run this app with query string `?api=1` to use the backend service.")
 st.write("Example: `.../app?api=1&subject_code=maths&hours_per_week=2&sessions_per_week=2&autostart=1`")
