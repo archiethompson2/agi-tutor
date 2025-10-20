@@ -1,71 +1,78 @@
 from __future__ import annotations
 from datetime import date
-from typing import Any, List
-import math, json
+from typing import Any, Dict, List
 
-from agi_tutor.curriculum import load_curriculum
-from agi_tutor.agi_agent import call_model
+# Uses your existing loader
+from .curriculum import load_curriculum
 
-SYSTEM = (
-    "You plan learning modules for a school curriculum. "
-    "Group objectives into ordered modules of 30 to 60 minutes each, "
-    "respect prerequisite dependencies and the available total hours. "
-    "Return strict JSON with fields modules:[{title, summary, est_minutes, items:[{objective, success_criteria}]}]."
-)
+def _normalize_modules(mods: List[Dict[str, Any]]) -> Dict[str, Any]:
+    out: List[Dict[str, Any]] = []
+    for m in mods or []:
+        mm = {
+            "title": m.get("title", "Module"),
+            "summary": m.get("summary", ""),
+            "est_minutes": int(m.get("est_minutes", 45)),
+            "items": []
+        }
+        items = m.get("items", []) or []
+        for idx, it in enumerate(items):
+            mm["items"].append({
+                "objective": it.get("objective", f"Objective {idx+1}"),
+                "success_criteria": it.get("success_criteria", ""),
+                "order_index": int(it.get("order_index", idx)),
+            })
+        out.append(mm)
+    return {"modules": out}
 
-def weeks_between(start: date, end: date) -> int:
-    return max(1, ((end - start).days + 6) // 7)
-
-def _get_obj_list(spec: dict) -> list:
-    return spec.get("objectives") or spec.get("items") or spec.get("topics") or []
-
-def _fallback_modules(objs: list[dict], weeks: int) -> dict[str, Any]:
-    per = max(1, math.ceil(len(objs) / max(1, weeks)))
-    modules: list[dict[str, Any]] = []
-    for i in range(0, len(objs), per):
-        chunk = objs[i:i+per]
-        modules.append({
-            "title": f"Module {len(modules)+1}",
-            "summary": f"Auto chunk from {chunk[0]['name']} to {chunk[-1]['name']}",
-            "est_minutes": 45,
-            "items": [
-                {"objective": o["name"], "success_criteria": ", ".join(o.get("success", []))}
-                for o in chunk
-            ]
-        })
-    return {"modules": modules}
-
-def make_plan(name: str, region: str, year: str, subject: str,
-              hours_per_week: float, start: date, end: date) -> dict[str, Any]:
-    spec = load_curriculum(region, year, subject)
-    objs = _get_obj_list(spec)
-    weeks = weeks_between(start, end)
-    total_minutes = int(hours_per_week * 60 * weeks)
-
-    user = {
-        "student": {"name": name, "region": region, "year": year},
-        "subject": subject,
-        "timebox": {"weeks": weeks, "hours_per_week": hours_per_week, "total_minutes": total_minutes},
-        "objectives": [
-            {"objective": o.get("name"), "success_criteria": ", ".join(o.get("success", []))}
-            for o in objs
-        ]
+def _placeholder_plan() -> Dict[str, Any]:
+    return {
+        "modules": [{
+            "title": "Introduction to Key Concepts",
+            "summary": "An overview of essential mathematical ideas.",
+            "est_minutes": 30,
+            "items": [{"objective": "Placeholder Objective 1", "success_criteria": "Understand key idea", "order_index": 0}]
+        }]
     }
 
-    # Try model plan, then parse, otherwise fall back deterministically
-    try:
-        messages = [
-            {"role": "system", "content": SYSTEM},
-            {"role": "user", "content": json.dumps(user)}
-        ]
-        out = call_model(messages)  # may raise if no OPENAI_API_KEY on Render
-        start_i = out.find("{")
-        end_i = out.rfind("}")
-        if start_i != -1 and end_i != -1:
-            payload = json.loads(out[start_i:end_i+1])
-            if isinstance(payload, dict) and "modules" in payload:
-                return payload
-    except Exception:
-        pass
+def make_plan(
+    name: str,
+    region: str,
+    year: str,
+    subject: str,
+    hours_per_week: float,
+    start: date,
+    end: date
+) -> Dict[str, Any]:
+    """
+    Returns a plan dict: {"modules": [ {title, summary, est_minutes, items:[{objective, success_criteria, order_index}]} ]}
+    Priority:
+      1) Use prebuilt curriculum modules if present (e.g. data/curriculums/maths.json or region/year specific file)
+      2) Fallback to any legacy/objective-based logic in load_curriculum (normalize if possible)
+      3) Final fallback: single placeholder module
+    """
+    spec = load_curriculum(region, year, subject)
 
-    return _fallback_modules(objs, weeks)
+    # 1) Prebuilt modules path
+    if isinstance(spec, dict) and spec.get("modules"):
+        return _normalize_modules(spec["modules"])
+
+    # 2) Legacy shape: try to turn objectives into modules if present
+    #    e.g. {"objectives":[{"objective":..., "success_criteria":...}, ...]}
+    if isinstance(spec, dict) and spec.get("objectives"):
+        mods = [{
+            "title": f"{subject.title()} Core Objectives",
+            "summary": f"Auto-generated module from objectives for {subject} ({region} {year}).",
+            "est_minutes": max(45, int(60 * max(1, len(spec.get('objectives', [])) // 4))),
+            "items": [
+                {
+                    "objective": o.get("objective", f"Objective {i+1}"),
+                    "success_criteria": o.get("success_criteria", ""),
+                    "order_index": i
+                }
+                for i, o in enumerate(spec.get("objectives", []))
+            ]
+        }]
+        return _normalize_modules(mods)
+
+    # 3) Fallback
+    return _placeholder_plan()
