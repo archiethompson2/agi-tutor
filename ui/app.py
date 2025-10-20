@@ -189,21 +189,20 @@ if API_MODE:
                 st.session_state.api_messages.append({"role": "assistant", "content": first})
 
         if TUTOR_READY and "api_messages" in st.session_state and st.session_state.api_messages and call_model:
-            st.divider()
-            st.subheader("Tutor session")
-            for m in st.session_state.api_messages:
-                st.chat_message(m["role"]).write(m["content"])
-
-            user_msg = st.chat_input("Type your answer or question")
-            if user_msg:
-                st.session_state.api_messages.append({"role": "user", "content": user_msg})
-                try:
-                reply = call_model(st.session_state.api_messages)
-            except Exception as e:
-                st.error(f"Tutor call failed: {e}")
-                st.stop()
-            st.session_state.api_messages.append({"role": "assistant", "content": reply})
-            st.rerun()
+    st.divider()
+    st.subheader("Tutor session")
+    for m in st.session_state.api_messages:
+        st.chat_message(m["role"]).write(m["content"])
+    user_msg = st.chat_input("Type your answer or question")
+    if user_msg:
+        st.session_state.api_messages.append({"role": "user", "content": user_msg})
+        try:
+            reply = call_model(st.session_state.api_messages)
+        except Exception as e:
+            st.error(f"Tutor call failed: {e}")
+            st.stop()
+        st.session_state.api_messages.append({"role": "assistant", "content": reply})
+        st.rerun()
 
     st.stop()
 
