@@ -2,7 +2,6 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Dict, List
 
-# Uses your existing loader
 from .curriculum import load_curriculum
 
 def _normalize_modules(mods: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -44,21 +43,20 @@ def make_plan(
     end: date
 ) -> Dict[str, Any]:
     """
-    Returns a plan dict: {"modules": [ {title, summary, est_minutes, items:[{objective, success_criteria, order_index}]} ]}
+    Returns a plan dict: {"modules": [ ... ]}
     Priority:
-      1) Use prebuilt curriculum modules if present (e.g. data/curriculums/maths.json or region/year specific file)
-      2) Fallback to any legacy/objective-based logic in load_curriculum (normalize if possible)
-      3) Final fallback: single placeholder module
+      1) Use prebuilt curriculum modules if present and non-empty
+      2) If objectives-only spec, convert to one module
+      3) Fallback placeholder
     """
     spec = load_curriculum(region, year, subject)
 
-    # 1) Prebuilt modules path
-    if isinstance(spec, dict) and spec.get("modules"):
+    # 1) Prebuilt modules if non-empty
+    if isinstance(spec, dict) and isinstance(spec.get("modules"), list) and len(spec["modules"]) > 0:
         return _normalize_modules(spec["modules"])
 
-    # 2) Legacy shape: try to turn objectives into modules if present
-    #    e.g. {"objectives":[{"objective":..., "success_criteria":...}, ...]}
-    if isinstance(spec, dict) and spec.get("objectives"):
+    # 2) Legacy objectives → single module
+    if isinstance(spec, dict) and isinstance(spec.get("objectives"), list) and len(spec["objectives"]) > 0:
         mods = [{
             "title": f"{subject.title()} Core Objectives",
             "summary": f"Auto-generated module from objectives for {subject} ({region} {year}).",
