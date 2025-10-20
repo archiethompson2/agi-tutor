@@ -10,6 +10,9 @@ except Exception:
     build_system_prompt = None
     call_model = None
 
+# Explain in the UI why the tutor may be disabled
+TUTOR_READY = bool(build_system_prompt and call_model)
+
 st.set_page_config(page_title=f"AGI Tutor • {BUILD_TAG}", layout="wide")
 
 # Query param helper
@@ -158,6 +161,9 @@ if API_MODE:
             st.success("Session payload")
             st.json(sess)
             st.caption("This is your module/session JSON from the backend.")
+            if not TUTOR_READY:
+                st.warning("Tutor agent is disabled. Set OPENAI_API_KEY on the UI service and redeploy.")
+                st.stop()
 
             if build_system_prompt and call_model:
                 module = sess.get("module", {})
@@ -176,7 +182,7 @@ if API_MODE:
                 first = call_model(st.session_state.api_messages)
                 st.session_state.api_messages.append({"role": "assistant", "content": first})
 
-        if "api_messages" in st.session_state and st.session_state.api_messages and call_model:
+        if TUTOR_READY and "api_messages" in st.session_state and st.session_state.api_messages and call_model:
             st.divider()
             st.subheader("Tutor session")
             for m in st.session_state.api_messages:

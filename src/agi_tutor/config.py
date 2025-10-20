@@ -1,13 +1,8 @@
-from dataclasses import dataclass
-from dotenv import load_dotenv
 import os
 
-load_dotenv()
-
-@dataclass
 class Settings:
+    # Read from env; allow a backup var name if you prefer
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
-    openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-    db_path: str = os.getenv("DB_PATH", "tutor.db")
+    openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")  # pick any chat-capable model you have access to
 
 settings = Settings()
