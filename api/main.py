@@ -348,3 +348,19 @@ def db():
             last_err = e
             continue
     raise RuntimeError(f"Failed to open SQLite DB. Last error: {last_err}")
+
+
+# ---------- debug: curriculum paths & sample titles ----------
+from agi_tutor.curriculum import debug_candidates, load_curriculum
+from fastapi import Query
+
+@app.get("/debug/curriculum")
+def debug_curriculum(region: str = Query(...), stage: str = Query(...), subject: str = Query(...)):
+    spec = load_curriculum(region, stage, subject)
+    modules = spec.get("modules", []) if isinstance(spec, dict) else []
+    titles = [m.get("title") for m in modules[:5]]
+    return {
+        "candidates": debug_candidates(region, stage, subject),
+        "module_count": len(modules),
+        "sample_titles": titles
+    }
