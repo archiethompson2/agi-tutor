@@ -1,7 +1,7 @@
 import os, json, requests, streamlit as st
 
 API = os.getenv("AGI_TUTOR_API_BASE", "https://agi-tutor.onrender.com")
-BUILD_TAG = "UI-build: 2025-10-20-15:40Z"
+BUILD_TAG = "UI-build: 2025-10-20-16:55Z"
 
 # Optional: import the tutor agent for chat handoff
 try:
@@ -10,14 +10,27 @@ except Exception:
     build_system_prompt = None
     call_model = None
 
-# Explain in the UI why the tutor may be disabled
+# Tutor status + SIMULATE switch (lets you test chat loop even without OpenAI)
 TUTOR_READY = bool(build_system_prompt and call_model)
-with st.sidebar:
-    st.caption(f"Tutor status — ready: {TUTOR_READY} • model: {os.getenv('OPENAI_MODEL', 'unset')} • key: {'set' if os.getenv('OPENAI_API_KEY') else 'missing'}")
+SIMULATE = (os.getenv("SIMULATE_TUTOR", "0") == "1")
+if SIMULATE:
+    def call_model(msgs):
+        last_usr = ""
+        for m in msgs[::-1]:
+            if m["role"] == "user":
+                last_usr = m["content"]
+                break
+        return (
+            f"Okay — I heard: {last_usr}\n\n"
+            "[[ASSESSMENT]]{\"mastery_estimate\":0.5,\"confidence\":0.5,"
+            "\"topic\":\"Sim\",\"focus_area\":\"echo\",\"last_response_correct\":true,"
+            "\"ready_to_advance\":false,\"needs_more_practice\":false}[[/ASSESSMENT]]"
+        )
+    TUTOR_READY = True
 
 st.set_page_config(page_title=f"AGI Tutor • {BUILD_TAG}", layout="wide")
 
-# Query param helper
+# Query params (Streamlit v1.50 has st.query_params)
 try:
     qp = st.query_params
 except Exception:
@@ -67,11 +80,20 @@ def api_session_start(user_id, module_id):
     r.raise_for_status()
     return r.json()
 
-# ------------------- API mode UI -------------------
-if API_MODE:
-    st.title(f"AGI Tutor • Backend mode • {BUILD_TAG}")
+# ------------------- UI -------------------
+st.title(f"AGI Tutor • {BUILD_TAG}")
 
-    # Read from query string but expose REAL inputs to avoid bad values
+# Sidebar: persistent status for tutor agent config
+with st.sidebar:
+    st.caption(
+        f"Tutor status — ready: {TUTOR_READY} • "
+        f"model: {os.getenv('OPENAI_MODEL','unset')} • "
+        f"key: {'set' if os.getenv('OPENAI_API_KEY') else 'missing'} • "
+        f"simulate: {SIMULATE}"
+    )
+
+if API_MODE:
+    # Read from query string but expose inputs so bad params can be fixed
     default_subject = qget("subject_code", "maths")
     default_hpw = float(qget("hours_per_week", "2"))
     default_spw = int(qget("sessions_per_week", "2"))
@@ -81,13 +103,22 @@ if API_MODE:
     default_region = qget("region", "Wales")
     default_stage = qget("stage", "Year 8")
 
+    # Session-state init: always present so chat loop cannot break
+    if "user_id" not in st.session_state:
+        try:
+            st.session_state.user_id = int(qp.get("user_id", [0])[0])
+        except Exception:
+            st.session_state.user_id = 0
+    if "api_messages" not in st.session_state:
+        st.session_state.api_messages = []
+
     with st.sidebar:
         st.header("Learner")
         name = st.text_input("Name", default_name)
         region = st.text_input("Region", default_region)
         stage = st.text_input("Stage", default_stage)
 
-        subject_code = st.selectbox("Subject", ["maths"], index=0 if default_subject == "maths" else 0)
+        subject_code = st.selectbox("Subject", ["maths"], index=0)
         hpw = st.number_input("Hours per week", min_value=0.5, max_value=20.0, step=0.5, value=float(default_hpw))
         spw = st.number_input("Sessions per week", min_value=1, max_value=14, step=1, value=int(default_spw))
         start_date = st.text_input("Start date (YYYY-MM-DD)", default_start)
@@ -95,14 +126,9 @@ if API_MODE:
 
     col1, col2 = st.columns([2, 3])
 
+    # -------- Left: create/ensure ----------
     with col1:
         st.subheader("Create / ensure")
-
-        if "user_id" not in st.session_state:
-            try:
-                st.session_state.user_id = int(qp.get("user_id", [0])[0])
-            except Exception:
-                st.session_state.user_id = 0
 
         if st.button("Create user") or st.session_state.user_id == 0:
             try:
@@ -115,6 +141,9 @@ if API_MODE:
             except requests.HTTPError as e:
                 st.error(f"/signup failed: {e.response.text}")
                 st.stop()
+            except Exception as e:
+                st.error(f"/signup failed: {e}")
+                st.stop()
 
         plan_payload = {
             "user_id": int(st.session_state.user_id or 0),
@@ -123,7 +152,7 @@ if API_MODE:
             "start_date": start_date,
             "end_date": end_date,
         }
-        with st.expander("Plan payload (what will be POSTed to /plan)"):
+        with st.expander("Plan payload (POST /plan)"):
             st.json(plan_payload)
 
         if st.button("Ensure plan"):
@@ -133,7 +162,11 @@ if API_MODE:
             except requests.HTTPError as e:
                 st.error(f"/plan failed: {e.response.text}")
                 st.stop()
+            except Exception as e:
+                st.error(f"/plan failed: {e}")
+                st.stop()
 
+    # -------- Right: modules + session ----------
     with col2:
         st.subheader("Modules")
         try:
@@ -159,12 +192,16 @@ if API_MODE:
             except requests.HTTPError as e:
                 st.error(f"/session/start failed: {e.response.text}")
                 st.stop()
+            except Exception as e:
+                st.error(f"/session/start failed: {e}")
+                st.stop()
 
             st.success("Session payload")
             st.json(sess)
             st.caption("This is your module/session JSON from the backend.")
+
             if not TUTOR_READY:
-                st.warning("Tutor agent is disabled. Set OPENAI_API_KEY on the UI service and redeploy.")
+                st.warning("Tutor agent is disabled. Set OPENAI_API_KEY on the UI service and redeploy (or SIMULATE_TUTOR=1).")
                 st.stop()
 
             if build_system_prompt and call_model:
@@ -188,29 +225,27 @@ if API_MODE:
                     st.stop()
                 st.session_state.api_messages.append({"role": "assistant", "content": first})
 
-        
-if TUTOR_READY and "api_messages" in st.session_state and st.session_state.api_messages and call_model:
-    st.divider()
-    st.subheader("Tutor session")
+    # -------- Chat area (always visible once messages exist) ----------
+    if TUTOR_READY and "api_messages" in st.session_state and st.session_state.api_messages and call_model:
+        st.divider()
+        st.subheader("Tutor session")
 
-    for m in st.session_state.api_messages:
-        st.chat_message(m["role"]).write(m["content"])
+        for m in st.session_state.api_messages:
+            st.chat_message(m["role"]).write(m["content"])
 
-    user_msg = st.chat_input("Type your answer or question")
-    if user_msg:
-        st.session_state.api_messages.append({"role": "user", "content": user_msg})
-        try:
-            reply = call_model(st.session_state.api_messages)
-        except Exception as e:
-            st.error(f"Tutor call failed: {e}")
-            st.stop()
-        st.session_state.api_messages.append({"role": "assistant", "content": reply})
-        st.rerun()
-
+        user_msg = st.chat_input("Type your answer or question")
+        if user_msg:
+            st.session_state.api_messages.append({"role": "user", "content": user_msg})
+            try:
+                reply = call_model(st.session_state.api_messages)
+            except Exception as e:
+                st.error(f"Tutor call failed: {e}")
+                st.stop()
+            st.session_state.api_messages.append({"role": "assistant", "content": reply})
+            st.rerun()
 
     st.stop()
 
 # -------- Local demo fallback --------
-st.title(f"AGI Tutor (local demo) • {BUILD_TAG}")
-st.info("Run this app with query string `?api=1` to use the backend service.")
-st.write("Example: `.../app?api=1&subject_code=maths&hours_per_week=2&sessions_per_week=2&autostart=1`")
+st.info("Run with `?api=1` to use the backend service. Example:")
+st.code(".../app?api=1&subject_code=maths&hours_per_week=2&sessions_per_week=2&autostart=1")
