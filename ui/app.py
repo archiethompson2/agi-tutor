@@ -1,7 +1,7 @@
 import os, json, requests, streamlit as st
 
 API = os.getenv("AGI_TUTOR_API_BASE", "https://agi-tutor.onrender.com")
-BUILD_TAG = "UI-build: 2025-10-16-12:20Z"
+BUILD_TAG = "UI-build: 2025-10-20-15:40Z"
 
 # Optional: import the tutor agent for chat handoff
 try:
@@ -12,6 +12,8 @@ except Exception:
 
 # Explain in the UI why the tutor may be disabled
 TUTOR_READY = bool(build_system_prompt and call_model)
+with st.sidebar:
+    st.caption(f"Tutor status — ready: {TUTOR_READY} • model: {os.getenv('OPENAI_MODEL', 'unset')} • key: {'set' if os.getenv('OPENAI_API_KEY') else 'missing'}")
 
 st.set_page_config(page_title=f"AGI Tutor • {BUILD_TAG}", layout="wide")
 
@@ -179,7 +181,11 @@ if API_MODE:
                     {"role": "system", "content": sys_prompt},
                     {"role": "user", "content": f"Hi! Start the session for {name}. Greet me, set today’s goal, and ask the first question."}
                 ]
-                first = call_model(st.session_state.api_messages)
+                try:
+                    first = call_model(st.session_state.api_messages)
+                except Exception as e:
+                    st.error(f"Tutor call failed on first turn: {e}")
+                    st.stop()
                 st.session_state.api_messages.append({"role": "assistant", "content": first})
 
         if TUTOR_READY and "api_messages" in st.session_state and st.session_state.api_messages and call_model:
@@ -191,9 +197,13 @@ if API_MODE:
             user_msg = st.chat_input("Type your answer or question")
             if user_msg:
                 st.session_state.api_messages.append({"role": "user", "content": user_msg})
+                try:
                 reply = call_model(st.session_state.api_messages)
-                st.session_state.api_messages.append({"role": "assistant", "content": reply})
-                st.rerun()
+            except Exception as e:
+                st.error(f"Tutor call failed: {e}")
+                st.stop()
+            st.session_state.api_messages.append({"role": "assistant", "content": reply})
+            st.rerun()
 
     st.stop()
 
