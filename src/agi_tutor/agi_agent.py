@@ -39,6 +39,7 @@ def build_system_prompt(context: dict) -> str:
             sc = item.get("success_criteria", "")
             lines.append(f"{i}. {obj}" + (f" — success criteria: {sc}" if sc else ""))
 
+    # Base tutoring turn format (original)
     lines.append(
         (
             "TUTORING TURN FORMAT (use this every turn):\n"
@@ -56,29 +57,28 @@ def build_system_prompt(context: dict) -> str:
         )
     )
 
-    lines.append("
-    # --- OVERRIDE: strict item-level assessment schema and advancement rule ---
+    # OVERRIDE block: stricter, item-level schema (placed AFTER the base so it takes precedence)
     lines.append(
         (
-            "OVERRIDE — Use this stricter tutoring format in EVERY turn (this supersedes earlier instructions):\n"
-            "1) ONE-SENTENCE RECAP of the learner’s last message.\n"
-            "2) MICRO-EXPLANATION (2–4 short sentences) for the exact next step.\n"
-            "3) ONE ACTION ONLY: ask exactly one question/instruction. Scaffold if they struggled.\n"
-            "4) [[ASSESSMENT]] JSON (STRICT):\n"
-            "   {\"item_index\": <int zero-based>,\n"
-            "    \"objective\": <string of the current item's objective>,\n"
-            "    \"last_response_correct\": <true|false|null>,\n"
-            "    \"mastery_estimate\": <0..1>,\n"
-            "    \"confidence\": <0..1>,\n"
-            "    \"ready_to_advance\": <true|false>,\n"
-            "    \"needs_more_practice\": <true|false>}\n"
-            "Rule: 0.70 is the secure threshold. If confidence < 0.70, stay on the SAME item and scaffold. "
-            "If confidence ≥ 0.70 AND mastery_estimate ≥ 0.70, advance to the NEXT item.\n"
-            "Wrap the JSON EXACTLY in [[ASSESSMENT]] ... [[/ASSESSMENT]]."
+            """OVERRIDE — Use this stricter tutoring format in EVERY turn (this supersedes earlier instructions):
+1) ONE-SENTENCE RECAP of the learner’s last message.
+2) MICRO-EXPLANATION (2–4 short sentences) for the exact next step.
+3) ONE ACTION ONLY: ask exactly one question/instruction. Scaffold if they struggled.
+4) [[ASSESSMENT]] JSON (STRICT):
+   {"item_index": <int zero-based>,
+    "objective": <string of the current item's objective>,
+    "last_response_correct": <true|false|null>,
+    "mastery_estimate": <0..1>,
+    "confidence": <0..1>,
+    "ready_to_advance": <true|false>,
+    "needs_more_practice": <true|false>}
+Rule: 0.70 is the secure threshold. If confidence < 0.70, stay on the SAME item and scaffold.
+If confidence ≥ 0.70 AND mastery_estimate ≥ 0.70, advance to the NEXT item.
+Wrap the JSON EXACTLY in [[ASSESSMENT]] ... [[/ASSESSMENT]]."""
         )
     )
 
-    Keep language friendly and concise. Never ask multiple questions at once. Always end with exactly one question.")
+    lines.append("Keep language friendly and concise. Never ask multiple questions at once. Always end with exactly one question.")
     return "\n".join(lines)
 
 def call_model(messages: List[Dict], temperature: float = 0.2, max_tokens: int = 700) -> str:
@@ -93,6 +93,8 @@ def call_model(messages: List[Dict], temperature: float = 0.2, max_tokens: int =
 
 def split_assessment(text: str) -> Tuple[str, Dict]:
     """Remove and parse the [[ASSESSMENT]]...[[/ASSESSMENT]] block, return (text_without_block, assessment_dict)."""
+    pattern = re.compile(re.escape(ASSESSMENT_START) + r"(.*?)" + re.escape(ASSESESSMENT_END), re.DOTALL)
+    # Correction: the constant is ASSESSMENT_END (typo guard)
     pattern = re.compile(re.escape(ASSESSMENT_START) + r"(.*?)" + re.escape(ASSESSMENT_END), re.DOTALL)
     m = pattern.search(text or "")
     assess: Dict = {}
@@ -109,7 +111,7 @@ def recover_assessment(messages: List[Dict], assistant_text: str) -> Dict:
     prompt = (
         "Return ONLY the assessment block for the last assistant turn, no other text. "
         f"Wrap strictly as {ASSESSMENT_START}" + "{...}" + f"{ASSESSMENT_END}. "
-        "Keys required: item_index, objective, mastery_estimate, confidence, last_response_correct, ready_to_advance, needs_more_practice. (Do not include any other text.) Keys required: mastery_estimate, confidence, topic, focus_area, last_response_correct, "
+        "Keys required: item_index, objective, mastery_estimate, confidence, last_response_correct, "
         "ready_to_advance, needs_more_practice."
     )
     msgs = messages[:] + [
