@@ -1,0 +1,66 @@
+.
+├── agi_agent.py
+├── agi_tutor
+├── api
+│   └── main.py
+├── backups
+│   ├── agi-tutor-backup_20251009_214251.tar.gz
+│   └── agi-tutor_2025-10-16_10-38.tar.gz
+├── data
+│   ├── Year8_Wales_Maths.json
+│   └── curriculums
+│       ├── Year8_Wales_Maths.json
+│       ├── maths.json
+│       └── maths_year8_wales.json
+├── only
+├── pages
+│   └── 0_API_Smoke_Test.py
+├── project_tree.txt
+├── requirements.txt
+├── scripts
+│   ├── backup.sh
+│   └── restore.sh
+├── src
+│   └── agi_tutor
+│       ├── __init__.py
+│       ├── __pycache__
+│       ├── agi_agent.py
+│       ├── api_client.py
+│       ├── cli.py
+│       ├── config.py
+│       ├── curriculum.py
+│       ├── curriculums
+│       ├── db.py
+│       ├── guardrails.py
+│       ├── module_planner.py
+│       ├── planner.py
+│       ├── reset_db.py
+│       └── session_manager.py
+├── tutor.db
+├── tutor.db-shm
+├── tutor.db-wal
+├── ui
+│   ├── app.py
+│   ├── assets
+│   │   ├── README.txt
+│   │   └── tutor_character.png
+│   └── pages
+└── venv
+    ├── bin
+    │   ├── Activate.ps1
+    │   ├── activate
+    │   ├── activate.csh
+    │   ├── activate.fish
+    │   ├── pip
+    │   ├── pip3
+    │   ├── pip3.14
+    │   ├── python -> python3.14
+    │   ├── python3 -> python3.14
+    │   ├── python3.14 -> /opt/homebrew/opt/python@3.14/bin/python3.14
+    │   └── 𝜋thon -> python3.14
+    ├── include
+    ├── lib
+    │   └── python3.14
+    └── pyvenv.cfg
+
+20 directories, 44 files
