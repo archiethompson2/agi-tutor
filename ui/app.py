@@ -5,7 +5,7 @@ BUILD_TAG = "UI-build: 2025-10-21-17:55Z"
 
 # Optional: import the tutor agent for chat handoff
 # Ensure the project src/ is on sys.path (Render/Streamlit sometimes misses it)
-import sys, pathlib
+import sys, pathlib, email.utils
 _IMPORT_ERR = None
 try:
     _PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -278,7 +278,7 @@ if API_MODE:
                 st.session_state.progress = {
                     "module_id": picked["id"],
                     "items": [{"objective": it.get("objective",""), "events": []} for it in items],
-                    "started_at": requests.utils.formatdate(usegmt=False)
+                    "started_at": email.utils.formatdate(usegmt=False)
                 }
                 st.session_state.module_meta = {"title": module.get("title",""), "items_total": len(items)}
                 try:
@@ -332,7 +332,7 @@ if API_MODE:
                     i = int(assess.get("item_index", 0))
                     if 0 <= i < len(st.session_state.progress["items"]):
                         st.session_state.progress["items"][i]["events"].append({
-                            "ts": requests.utils.formatdate(usegmt=False),
+                            "ts": email.utils.formatdate(usegmt=False),
                             "last_response_correct": assess.get("last_response_correct"),
                             "confidence": float(assess.get("confidence", 0.0)),
                             "mastery_estimate": float(assess.get("mastery_estimate", 0.0)),
