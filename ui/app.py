@@ -1,7 +1,7 @@
 import os, json, requests, streamlit as st
 
 API = os.getenv("AGI_TUTOR_API_BASE", "https://agi-tutor.onrender.com")
-BUILD_TAG = "UI-build: 2025-10-20-16:55Z"
+BUILD_TAG = "UI-build: 2025-10-21-17:40Z"
 
 # Optional: import the tutor agent for chat handoff
 # Ensure the project src/ is on sys.path (Render/Streamlit sometimes misses it)
@@ -12,7 +12,7 @@ try:
     _SRC = _PROJECT_ROOT / "src"
     if str(_SRC) not in sys.path:
         sys.path.insert(0, str(_SRC))
-    from agi_tutor.agi_agent import build_system_prompt, call_model  # type: ignore
+    from agi_tutor.agi_agent import build_system_prompt, call_model, split_assessment  # type: ignore
 except Exception as e:
     build_system_prompt = None
     call_model = None
@@ -126,6 +126,12 @@ if API_MODE:
     if "api_messages" not in st.session_state:
         st.session_state.api_messages = []
     if "session_started" not in st.session_state:
+    st.session_state.session_started = False
+    st.session_state.api_messages = []
+if "progress" not in st.session_state:
+    st.session_state.progress = {"module_id": None, "items": [], "started_at": None}
+if "module_meta" not in st.session_state:
+    st.session_state.module_meta = {"title": "", "items_total": 0}
         st.session_state.session_started = False
         st.session_state.api_messages = []
 
@@ -236,6 +242,12 @@ if API_MODE:
                     {"role": "user", "content": f"Hi! Start the session for {name}. Greet me, set today’s goal, and ask the first question."}
                 ]
                 st.session_state.session_started = True
+                st.session_state.progress = {
+                    "module_id": picked["id"],
+                    "items": [{"objective": it.get("objective",""), "events": []} for it in items],
+                    "started_at": requests.utils.formatdate(usegmt=False)
+                }
+                st.session_state.module_meta = {"title": module.get("title",""), "items_total": len(items)}
                 try:
                     # clear autostart=1 so future reruns don't reset the chat
                     try:
@@ -251,7 +263,23 @@ if API_MODE:
     # -------- Chat area (always visible once messages exist) ----------
     if TUTOR_READY and "api_messages" in st.session_state and st.session_state.api_messages and call_model:
         st.divider()
-        st.subheader("Tutor session")
+        left, right = st.columns([3,2])
+with left:
+    st.subheader("Tutor session")
+with right:
+    prog = st.session_state.progress
+    items_total = st.session_state.module_meta.get("items_total", 0) or 0
+    mastered = 0
+    confidences = []
+    for it in prog.get("items", []):
+        if it["events"]:
+            confidences.extend([e.get("confidence",0.0) for e in it["events"]])
+            recent = it["events"][-2:]
+            mean_recent = sum(e.get("confidence",0.0) for e in recent) / len(recent)
+            if mean_recent >= 0.70:
+                mastered += 1
+    avg_conf = (sum(confidences)/len(confidences)) if confidences else 0.0
+    st.caption(f"**Progress** · {mastered}/{items_total} mastered • avg confidence {avg_conf:.2f}")
 
         for m in st.session_state.api_messages:
             st.chat_message(m["role"]).write(m["content"])
@@ -264,10 +292,81 @@ if API_MODE:
             except Exception as e:
                 st.error(f"Tutor call failed: {e}")
                 st.stop()
-            st.session_state.api_messages.append({"role": "assistant", "content": reply})
+            text, assess = split_assessment(reply)
+st.session_state.api_messages.append({"role": "assistant", "content": text or reply})
+try:
+    if isinstance(assess, dict):
+        i = int(assess.get("item_index", 0))
+        if 0 <= i < len(st.session_state.progress["items"]):
+            st.session_state.progress["items"][i]["events"].append({
+                "ts": requests.utils.formatdate(usegmt=False),
+                "last_response_correct": assess.get("last_response_correct"),
+                "confidence": float(assess.get("confidence", 0.0)),
+                "mastery_estimate": float(assess.get("mastery_estimate", 0.0)),
+            })
+except Exception:
+    pass
             st.rerun()
+
+        # --- End Session: persist rollups ---
+        st.divider()
+        if st.button("End Session", type="primary"):
+            prog = st.session_state.progress
+            items = prog.get("items", [])
+            events_payload, confidences = [], []
+            mastered = 0
+            for idx, it in enumerate(items):
+                evs = it["events"]
+                for e in evs:
+                    confidences.append(e.get("confidence", 0.0))
+                    events_payload.append({
+                        "item_index": idx,
+                        "last_response_correct": e.get("last_response_correct"),
+                        "confidence": float(e.get("confidence", 0.0)),
+                        "mastery_estimate": float(e.get("mastery_estimate", 0.0)),
+                        "ts": e.get("ts"),
+                    })
+                if evs:
+                    recent = evs[-2:]
+                    mean_recent = sum(e.get("confidence",0.0) for e in recent)/len(recent)
+                    if mean_recent >= 0.70:
+                        mastered += 1
+            avg_conf = (sum(confidences)/len(confidences)) if confidences else 0.0
+            payload = {
+                "user_id": int(st.session_state.user_id),
+                "module_id": int(prog.get("module_id") or 0),
+                "time_spent_min": max(1.0, len(events_payload) * 1.0),
+                "mastery_estimate": float(min(1.0, (mastered / max(1, len(items))) if items else 0.0)),
+                "avg_confidence": float(avg_conf),
+                "items_total": int(len(items)),
+                "items_mastered": int(mastered),
+                "events": events_payload,
+            }
+            try:
+                api_session_complete(payload)
+                st.success("Session saved.")
+                try:
+                    m = api_metrics_module(st.session_state.user_id, prog.get("module_id") or 0)
+                    st.info(f"Latest roll-up • {m.get('items_mastered',0)}/{m.get('items_total',0)} mastered • "
+                            f"avg confidence {m.get('avg_confidence',0.0):.2f} • "
+                            f"time {m.get('time_spent_min',0.0):.1f} min")
+                except Exception:
+                    pass
+            except Exception as e:
+                st.error(f"/session/complete failed: {e}")
 
 # -------- Local demo fallback --------
 if not API_MODE:
     st.info("Run with `?api=1` to use the backend service. Example:")
     st.code(".../app?api=1&subject_code=maths&hours_per_week=2&sessions_per_week=2&autostart=1")
+
+
+def api_session_complete(payload: dict):
+    r = requests.post(f"{API}/session/complete", json=payload, timeout=45)
+    r.raise_for_status()
+    return r.json()
+
+def api_metrics_module(user_id: int, module_id: int):
+    r = requests.get(f"{API}/metrics/module", params={"user_id": user_id, "module_id": module_id}, timeout=30)
+    r.raise_for_status()
+    return r.json()
