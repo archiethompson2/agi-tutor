@@ -44,6 +44,27 @@ class StartSession(BaseModel):
     user_id: int
     module_id: int
 
+
+class SessionItemEvent(BaseModel):
+    item_index: int
+    last_response_correct: Optional[bool] = None
+    confidence: float
+    mastery_estimate: float
+    ts: str  # ISO timestamp from UI
+
+class SessionComplete(BaseModel):
+    user_id: int
+    module_id: int
+    time_spent_min: float
+    mastery_estimate: float
+    avg_confidence: float
+    items_total: int
+    items_mastered: int
+    events: List[SessionItemEvent]
+
+    user_id: int
+    module_id: int
+
 # ---------- endpoints ----------
 @app.post("/signup")
 def signup(s: Signup):
@@ -205,6 +226,29 @@ def init_db():
         success_criteria TEXT,
         order_index INTEGER NOT NULL
     );
+    
+    CREATE TABLE IF NOT EXISTS sessions_completed(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        module_id INTEGER NOT NULL,
+        time_spent_min REAL NOT NULL,
+        mastery_estimate REAL NOT NULL,
+        avg_confidence REAL NOT NULL,
+        items_total INTEGER NOT NULL,
+        items_mastered INTEGER NOT NULL,
+        created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS session_item_events(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id INTEGER NOT NULL,
+        module_id INTEGER NOT NULL,
+        item_index INTEGER NOT NULL,
+        last_response_correct INTEGER NULL,
+        confidence REAL NOT NULL,
+        mastery_estimate REAL NOT NULL,
+        ts TEXT NOT NULL
+    );
+
     """)
     con.commit()
     con.close()
@@ -364,3 +408,71 @@ def debug_curriculum(region: str = Query(...), stage: str = Query(...), subject:
         "module_count": len(modules),
         "sample_titles": titles
     }
+
+
+@app.post("/session/complete")
+def session_complete(payload: SessionComplete):
+    con = db()
+    cur = con.cursor()
+    cur.execute("""
+        INSERT INTO sessions_completed(user_id, module_id, time_spent_min, mastery_estimate,
+                                       avg_confidence, items_total, items_mastered, created_at)
+        VALUES(?,?,?,?,?,?,?,?)
+    """, (
+        payload.user_id, payload.module_id, float(payload.time_spent_min),
+        float(payload.mastery_estimate), float(payload.avg_confidence),
+        int(payload.items_total), int(payload.items_mastered),
+        datetime.utcnow().isoformat(timespec="seconds")
+    ))
+    sid = cur.lastrowid
+    for e in payload.events:
+        cur.execute("""
+            INSERT INTO session_item_events(session_id, module_id, item_index,
+                                            last_response_correct, confidence, mastery_estimate, ts)
+            VALUES(?,?,?,?,?,?,?)
+        """, (
+            sid, payload.module_id, int(e.item_index),
+            (1 if e.last_response_correct is True else (0 if e.last_response_correct is False else None)),
+            float(e.confidence), float(e.mastery_estimate), e.ts
+        ))
+    con.commit()
+    con.close()
+    return {"ok": True, "session_id": sid}
+
+
+@app.get("/metrics/module")
+def metrics_module(user_id: int, module_id: int):
+    con = db()
+    row = con.execute("""
+        SELECT id, items_total, items_mastered, avg_confidence, time_spent_min, created_at, mastery_estimate
+        FROM sessions_completed
+        WHERE user_id=? AND module_id=?
+        ORDER BY created_at DESC
+        LIMIT 1
+    """, (user_id, module_id)).fetchone()
+    if not row:
+        con.close()
+        return {
+            "items_total": 0, "items_mastered": 0, "avg_confidence": 0.0,
+            "time_spent_min": 0.0, "last_completed_at": None, "mastery_estimate": 0.0
+        }
+    out = {
+        "items_total": int(row["items_total"]),
+        "items_mastered": int(row["items_mastered"]),
+        "avg_confidence": float(row["avg_confidence"]),
+        "time_spent_min": float(row["time_spent_min"]),
+        "last_completed_at": row["created_at"],
+        "mastery_estimate": float(row["mastery_estimate"]),
+    }
+    con.close()
+    return out
+
+try:
+    con = db()
+    cur = con.cursor()
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sessions_completed_lookup ON sessions_completed(user_id, module_id, created_at)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_item_events_session ON session_item_events(session_id)")
+    con.commit()
+    con.close()
+except Exception as _e:
+    print("index create failed:", _e)

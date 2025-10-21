@@ -56,7 +56,29 @@ def build_system_prompt(context: dict) -> str:
         )
     )
 
-    lines.append("Keep language friendly and concise. Never ask multiple questions at once. Always end with exactly one question.")
+    lines.append("
+    # --- OVERRIDE: strict item-level assessment schema and advancement rule ---
+    lines.append(
+        (
+            "OVERRIDE — Use this stricter tutoring format in EVERY turn (this supersedes earlier instructions):\n"
+            "1) ONE-SENTENCE RECAP of the learner’s last message.\n"
+            "2) MICRO-EXPLANATION (2–4 short sentences) for the exact next step.\n"
+            "3) ONE ACTION ONLY: ask exactly one question/instruction. Scaffold if they struggled.\n"
+            "4) [[ASSESSMENT]] JSON (STRICT):\n"
+            "   {\"item_index\": <int zero-based>,\n"
+            "    \"objective\": <string of the current item's objective>,\n"
+            "    \"last_response_correct\": <true|false|null>,\n"
+            "    \"mastery_estimate\": <0..1>,\n"
+            "    \"confidence\": <0..1>,\n"
+            "    \"ready_to_advance\": <true|false>,\n"
+            "    \"needs_more_practice\": <true|false>}\n"
+            "Rule: 0.70 is the secure threshold. If confidence < 0.70, stay on the SAME item and scaffold. "
+            "If confidence ≥ 0.70 AND mastery_estimate ≥ 0.70, advance to the NEXT item.\n"
+            "Wrap the JSON EXACTLY in [[ASSESSMENT]] ... [[/ASSESSMENT]]."
+        )
+    )
+
+    Keep language friendly and concise. Never ask multiple questions at once. Always end with exactly one question.")
     return "\n".join(lines)
 
 def call_model(messages: List[Dict], temperature: float = 0.2, max_tokens: int = 700) -> str:
@@ -87,16 +109,5 @@ def recover_assessment(messages: List[Dict], assistant_text: str) -> Dict:
     prompt = (
         "Return ONLY the assessment block for the last assistant turn, no other text. "
         f"Wrap strictly as {ASSESSMENT_START}" + "{...}" + f"{ASSESSMENT_END}. "
-        "Keys required: mastery_estimate, confidence, topic, focus_area, last_response_correct, "
-        "ready_to_advance, needs_more_practice."
-    )
-    msgs = messages[:] + [
-        {"role": "assistant", "content": assistant_text},
-        {"role": "user", "content": prompt},
-    ]
-    try:
-        txt = call_model(msgs)
-        _, assess = split_assessment(txt)
-        return assess if isinstance(assess, dict) else {}
-    except Exception:
-        return {}
+        "Keys required: item_index, objective, mastery_estimate, confidence, last_response_correct, ready_to_advance, needs_more_practice. (Do not include any other text.) Keys required: mastery_estimate, confidence, topic, focus_area, last_response_correct, "
+        "ready_to_advance, ne

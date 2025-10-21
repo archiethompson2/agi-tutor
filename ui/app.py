@@ -256,18 +256,4 @@ if API_MODE:
         for m in st.session_state.api_messages:
             st.chat_message(m["role"]).write(m["content"])
 
-        user_msg = st.chat_input("Type your answer or question")
-        if user_msg:
-            st.session_state.api_messages.append({"role": "user", "content": user_msg})
-            try:
-                reply = call_model(st.session_state.api_messages)
-            except Exception as e:
-                st.error(f"Tutor call failed: {e}")
-                st.stop()
-            st.session_state.api_messages.append({"role": "assistant", "content": reply})
-            st.rerun()
-
-# -------- Local demo fallback --------
-if not API_MODE:
-    st.info("Run with `?api=1` to use the backend service. Example:")
-    st.code(".../app?api=1&subject_code=maths&hours_per_week=2&sessions_per_week=2&autostart=1")
+        user_msg = st.chat_inpu
