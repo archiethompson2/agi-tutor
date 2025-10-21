@@ -4,29 +4,19 @@ API = os.getenv("AGI_TUTOR_API_BASE", "https://agi-tutor.onrender.com")
 BUILD_TAG = "UI-build: 2025-10-20-16:55Z"
 
 # Optional: import the tutor agent for chat handoff
+# Ensure the project src/ is on sys.path (Render/Streamlit sometimes misses it)
+import sys, pathlib, traceback
+_IMPORT_ERR = None
 try:
+    _PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
+    _SRC = _PROJECT_ROOT / "src"
+    if str(_SRC) not in sys.path:
+        sys.path.insert(0, str(_SRC))
     from agi_tutor.agi_agent import build_system_prompt, call_model  # type: ignore
-except Exception:
+except Exception as e:
     build_system_prompt = None
     call_model = None
-
-# Tutor status + SIMULATE switch (lets you test chat loop even without OpenAI)
-TUTOR_READY = bool(build_system_prompt and call_model)
-SIMULATE = (os.getenv("SIMULATE_TUTOR", "0") == "1")
-if SIMULATE:
-    def call_model(msgs):
-        last_usr = ""
-        for m in msgs[::-1]:
-            if m["role"] == "user":
-                last_usr = m["content"]
-                break
-        return (
-            f"Okay — I heard: {last_usr}\n\n"
-            "[[ASSESSMENT]]{\"mastery_estimate\":0.5,\"confidence\":0.5,"
-            "\"topic\":\"Sim\",\"focus_area\":\"echo\",\"last_response_correct\":true,"
-            "\"ready_to_advance\":false,\"needs_more_practice\":false}[[/ASSESSMENT]]"
-        )
-    TUTOR_READY = True
+    _IMPORT_ERR = f"{type(e).__name__}: {e}"
 
 st.set_page_config(page_title=f"AGI Tutor • {BUILD_TAG}", layout="wide")
 
@@ -88,6 +78,11 @@ with st.sidebar:
     st.caption(
         f"Tutor status — ready: {TUTOR_READY} • "
         f"model: {os.getenv('OPENAI_MODEL','unset')} • "
+    if not TUTOR_READY and os.getenv('SIMULATE_TUTOR','0')!='1':
+        if '_IMPORT_ERR' in globals() and _IMPORT_ERR:
+            st.warning(f"Agent import failed: {_IMPORT_ERR}")
+        elif not os.getenv('OPENAI_API_KEY'):
+            st.warning('OPENAI_API_KEY is missing on the UI service.')
         f"key: {'set' if os.getenv('OPENAI_API_KEY') else 'missing'} • "
         f"simulate: {SIMULATE}"
     )
