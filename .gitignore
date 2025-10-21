@@ -1,9 +1,10 @@
 .venv/
-.env
-tutor.db
-backups/
 __pycache__/
 *.pyc
-.streamlit/
 .DS_Store
+ui/.DS_Store
+backups/
+data/*.tar.gz
+*.db
+*.db-*
 .env

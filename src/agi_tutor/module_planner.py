@@ -24,6 +24,7 @@ def _normalize_modules(mods: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {"modules": out}
 
 def _placeholder_plan() -> Dict[str, Any]:
+    print("[planner] WARNING: using placeholder plan (no curriculum modules found)")
     return {
         "modules": [{
             "title": "Introduction to Key Concepts",
