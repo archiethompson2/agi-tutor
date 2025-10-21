@@ -111,6 +111,9 @@ if API_MODE:
             st.session_state.user_id = 0
     if "api_messages" not in st.session_state:
         st.session_state.api_messages = []
+    if "session_started" not in st.session_state:
+        st.session_state.session_started = False
+        st.session_state.api_messages = []
 
     with st.sidebar:
         st.header("Learner")
@@ -186,7 +189,7 @@ if API_MODE:
             st.json(picked)
 
         autostart = qget("autostart", "0") == "1"
-        if autostart or st.button("Start session"):
+        if ((autostart and not st.session_state.session_started) or st.button("Start session")):
             try:
                 sess = api_session_start(user_id=st.session_state.user_id, module_id=picked["id"])
             except requests.HTTPError as e:
@@ -218,7 +221,13 @@ if API_MODE:
                     {"role": "system", "content": sys_prompt},
                     {"role": "user", "content": f"Hi! Start the session for {name}. Greet me, set today’s goal, and ask the first question."}
                 ]
+                st.session_state.session_started = True
                 try:
+                    # clear autostart=1 so future reruns don't reset the chat
+                    try:
+                        st.query_params["autostart"] = "0"
+                    except Exception:
+                        pass
                     first = call_model(st.session_state.api_messages)
                 except Exception as e:
                     st.error(f"Tutor call failed on first turn: {e}")
