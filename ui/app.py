@@ -1,7 +1,7 @@
 import os, json, requests, streamlit as st
 
 API = os.getenv("AGI_TUTOR_API_BASE", "https://agi-tutor.onrender.com")
-BUILD_TAG = "UI-build: 2025-10-21-17:40Z"
+BUILD_TAG = "UI-build: 2025-10-21-17:55Z"
 
 # Optional: import the tutor agent for chat handoff
 # Ensure the project src/ is on sys.path (Render/Streamlit sometimes misses it)
@@ -16,6 +16,7 @@ try:
 except Exception as e:
     build_system_prompt = None
     call_model = None
+    split_assessment = None
     _IMPORT_ERR = f"{type(e).__name__}: {e}"
 
 # Tutor status + SIMULATE switch (lets you test chat loop even without OpenAI)
@@ -28,12 +29,36 @@ if SIMULATE:
             if m["role"] == "user":
                 last_usr = m["content"]
                 break
+        # Emit a valid [[ASSESSMENT]] block
         return (
-            f"Okay — I heard: {last_usr}\\n\\n"
-            "[[ASSESSMENT]]{\"mastery_estimate\":0.5,\"confidence\":0.5,"
-            "\"topic\":\"Sim\",\"focus_area\":\"echo\",\"last_response_correct\":true,"
-            "\"ready_to_advance\":false,\"needs_more_practice\":false}[[/ASSESSMENT]]"
+            f"Okay — I heard: {last_usr}\n\n"
+            "[[ASSESSMENT]]"
+            "{"
+            "\"item_index\": 0, "
+            "\"objective\": \"Sim objective\", "
+            "\"mastery_estimate\": 0.5, "
+            "\"confidence\": 0.5, "
+            "\"last_response_correct\": true, "
+            "\"ready_to_advance\": false, "
+            "\"needs_more_practice\": true"
+            "}"
+            "[[/ASSESSMENT]]"
         )
+    # Minimal inline split to allow SIMULATE without agi_agent import
+    if split_assessment is None:
+        import re, json as _json
+        ASSESSMENT_START, ASSESSMENT_END = "[[ASSESSMENT]]", "[[/ASSESSMENT]]"
+        def split_assessment(text: str):
+            pat = re.compile(re.escape(ASSESSMENT_START) + r"(.*?)" + re.escape(ASSESSMENT_END), re.DOTALL)
+            m = pat.search(text or "")
+            assess = {}
+            if m:
+                try:
+                    assess = _json.loads(m.group(1).strip())
+                except Exception:
+                    assess = {}
+                text = pat.sub("", text).strip()
+            return text, assess
     TUTOR_READY = True
 
 st.set_page_config(page_title=f"AGI Tutor • {BUILD_TAG}", layout="wide")
@@ -88,6 +113,16 @@ def api_session_start(user_id, module_id):
     r.raise_for_status()
     return r.json()
 
+def api_session_complete(payload: dict):
+    r = requests.post(f"{API}/session/complete", json=payload, timeout=45)
+    r.raise_for_status()
+    return r.json()
+
+def api_metrics_module(user_id: int, module_id: int):
+    r = requests.get(f"{API}/metrics/module", params={"user_id": user_id, "module_id": module_id}, timeout=30)
+    r.raise_for_status()
+    return r.json()
+
 # ------------------- UI -------------------
 st.title(f"AGI Tutor • {BUILD_TAG}")
 
@@ -107,7 +142,7 @@ with st.sidebar:
             st.warning('OPENAI_API_KEY is missing on the UI service.')
 
 if API_MODE:
-    # Read from query string but expose inputs so bad params can be fixed
+    # Read from query string but expose inputs so params can be fixed in UI
     default_subject = qget("subject_code", "maths")
     default_hpw = float(qget("hours_per_week", "2"))
     default_spw = int(qget("sessions_per_week", "2"))
@@ -126,15 +161,13 @@ if API_MODE:
     if "api_messages" not in st.session_state:
         st.session_state.api_messages = []
     if "session_started" not in st.session_state:
-    st.session_state.session_started = False
-    st.session_state.api_messages = []
-if "progress" not in st.session_state:
-    st.session_state.progress = {"module_id": None, "items": [], "started_at": None}
-if "module_meta" not in st.session_state:
-    st.session_state.module_meta = {"title": "", "items_total": 0}
         st.session_state.session_started = False
-        st.session_state.api_messages = []
+    if "progress" not in st.session_state:
+        st.session_state.progress = {"module_id": None, "items": [], "started_at": None}
+    if "module_meta" not in st.session_state:
+        st.session_state.module_meta = {"title": "", "items_total": 0}
 
+    # --- Sidebar learner fields
     with st.sidebar:
         st.header("Learner")
         name = st.text_input("Name", default_name)
@@ -261,25 +294,25 @@ if "module_meta" not in st.session_state:
                 st.session_state.api_messages.append({"role": "assistant", "content": first})
 
     # -------- Chat area (always visible once messages exist) ----------
-    if TUTOR_READY and "api_messages" in st.session_state and st.session_state.api_messages and call_model:
+    if TUTOR_READY and st.session_state.get("api_messages") and call_model:
         st.divider()
         left, right = st.columns([3,2])
-with left:
-    st.subheader("Tutor session")
-with right:
-    prog = st.session_state.progress
-    items_total = st.session_state.module_meta.get("items_total", 0) or 0
-    mastered = 0
-    confidences = []
-    for it in prog.get("items", []):
-        if it["events"]:
-            confidences.extend([e.get("confidence",0.0) for e in it["events"]])
-            recent = it["events"][-2:]
-            mean_recent = sum(e.get("confidence",0.0) for e in recent) / len(recent)
-            if mean_recent >= 0.70:
-                mastered += 1
-    avg_conf = (sum(confidences)/len(confidences)) if confidences else 0.0
-    st.caption(f"**Progress** · {mastered}/{items_total} mastered • avg confidence {avg_conf:.2f}")
+        with left:
+            st.subheader("Tutor session")
+        with right:
+            prog = st.session_state.progress
+            items_total = st.session_state.module_meta.get("items_total", 0) or 0
+            mastered = 0
+            confidences = []
+            for it in prog.get("items", []):
+                if it["events"]:
+                    confidences.extend([e.get("confidence",0.0) for e in it["events"]])
+                    recent = it["events"][-2:]
+                    mean_recent = sum(e.get("confidence",0.0) for e in recent) / len(recent)
+                    if mean_recent >= 0.70:
+                        mastered += 1
+            avg_conf = (sum(confidences)/len(confidences)) if confidences else 0.0
+            st.caption(f"**Progress** · {mastered}/{items_total} mastered • avg confidence {avg_conf:.2f}")
 
         for m in st.session_state.api_messages:
             st.chat_message(m["role"]).write(m["content"])
@@ -292,20 +325,20 @@ with right:
             except Exception as e:
                 st.error(f"Tutor call failed: {e}")
                 st.stop()
-            text, assess = split_assessment(reply)
-st.session_state.api_messages.append({"role": "assistant", "content": text or reply})
-try:
-    if isinstance(assess, dict):
-        i = int(assess.get("item_index", 0))
-        if 0 <= i < len(st.session_state.progress["items"]):
-            st.session_state.progress["items"][i]["events"].append({
-                "ts": requests.utils.formatdate(usegmt=False),
-                "last_response_correct": assess.get("last_response_correct"),
-                "confidence": float(assess.get("confidence", 0.0)),
-                "mastery_estimate": float(assess.get("mastery_estimate", 0.0)),
-            })
-except Exception:
-    pass
+            text, assess = split_assessment(reply) if split_assessment else (reply, {})
+            st.session_state.api_messages.append({"role": "assistant", "content": text or reply})
+            try:
+                if isinstance(assess, dict):
+                    i = int(assess.get("item_index", 0))
+                    if 0 <= i < len(st.session_state.progress["items"]):
+                        st.session_state.progress["items"][i]["events"].append({
+                            "ts": requests.utils.formatdate(usegmt=False),
+                            "last_response_correct": assess.get("last_response_correct"),
+                            "confidence": float(assess.get("confidence", 0.0)),
+                            "mastery_estimate": float(assess.get("mastery_estimate", 0.0)),
+                        })
+            except Exception:
+                pass
             st.rerun()
 
         # --- End Session: persist rollups ---
@@ -347,9 +380,11 @@ except Exception:
                 st.success("Session saved.")
                 try:
                     m = api_metrics_module(st.session_state.user_id, prog.get("module_id") or 0)
-                    st.info(f"Latest roll-up • {m.get('items_mastered',0)}/{m.get('items_total',0)} mastered • "
-                            f"avg confidence {m.get('avg_confidence',0.0):.2f} • "
-                            f"time {m.get('time_spent_min',0.0):.1f} min")
+                    st.info(
+                        f"Latest roll-up • {m.get('items_mastered',0)}/{m.get('items_total',0)} mastered • "
+                        f"avg confidence {m.get('avg_confidence',0.0):.2f} • "
+                        f"time {m.get('time_spent_min',0.0):.1f} min"
+                    )
                 except Exception:
                     pass
             except Exception as e:
@@ -359,14 +394,3 @@ except Exception:
 if not API_MODE:
     st.info("Run with `?api=1` to use the backend service. Example:")
     st.code(".../app?api=1&subject_code=maths&hours_per_week=2&sessions_per_week=2&autostart=1")
-
-
-def api_session_complete(payload: dict):
-    r = requests.post(f"{API}/session/complete", json=payload, timeout=45)
-    r.raise_for_status()
-    return r.json()
-
-def api_metrics_module(user_id: int, module_id: int):
-    r = requests.get(f"{API}/metrics/module", params={"user_id": user_id, "module_id": module_id}, timeout=30)
-    r.raise_for_status()
-    return r.json()
