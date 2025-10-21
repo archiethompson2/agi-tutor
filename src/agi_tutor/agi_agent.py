@@ -110,4 +110,15 @@ def recover_assessment(messages: List[Dict], assistant_text: str) -> Dict:
         "Return ONLY the assessment block for the last assistant turn, no other text. "
         f"Wrap strictly as {ASSESSMENT_START}" + "{...}" + f"{ASSESSMENT_END}. "
         "Keys required: item_index, objective, mastery_estimate, confidence, last_response_correct, ready_to_advance, needs_more_practice. (Do not include any other text.) Keys required: mastery_estimate, confidence, topic, focus_area, last_response_correct, "
-        "ready_to_advance, ne
+        "ready_to_advance, needs_more_practice."
+    )
+    msgs = messages[:] + [
+        {"role": "assistant", "content": assistant_text},
+        {"role": "user", "content": prompt},
+    ]
+    try:
+        txt = call_model(msgs)
+        _, assess = split_assessment(txt)
+        return assess if isinstance(assess, dict) else {}
+    except Exception:
+        return {}
