@@ -312,6 +312,13 @@ if API_MODE:
                     if mean_recent >= 0.70:
                         mastered += 1
             avg_conf = (sum(confidences)/len(confidences)) if confidences else 0.0
+            # progress bar + badge
+            prog_ratio = (mastered / items_total) if items_total else 0.0
+            try:
+                st.progress(int(prog_ratio * 100), text=f"{mastered}/{items_total} mastered")
+            except TypeError:
+                # older streamlit versions don't support the text= param
+                st.progress(int(prog_ratio * 100))
             st.caption(f"**Progress** · {mastered}/{items_total} mastered • avg confidence {avg_conf:.2f}")
 
         for m in st.session_state.api_messages:
