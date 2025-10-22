@@ -1,3 +1,13 @@
+import os, sqlite3, pathlib
+DB_DIR = os.getenv('DB_DIR', '/var/data')
+pathlib.Path(DB_DIR).mkdir(parents=True, exist_ok=True)
+DB_PATH = os.getenv('DB_PATH', os.path.join(DB_DIR, 'agi_tutor.sqlite'))
+
+def get_conn():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
