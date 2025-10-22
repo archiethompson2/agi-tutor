@@ -292,12 +292,15 @@ if API_MODE:
         if not mods:
             st.info("No modules yet. Click Ensure plan."); st.stop()
 
-        def _mins(m):
-    if 'estimated_minutes' in m and isinstance(m['estimated_minutes'], (int,float)):
-        return int(m['estimated_minutes'])
-    items = m.get('items', [])
-    return max(10, int(len(items) * 6))  # fallback: ~6 min per item
-titles = [f"{m.get('title', f'Module {i+1}')} • ~{_mins(m)} min" for i, m in enumerate(mods)]
+        titles = []
+        for i, m in enumerate(mods):
+            estimated_minutes = m.get('estimated_minutes')
+            if isinstance(estimated_minutes, (int, float)):
+                minutes = int(estimated_minutes)
+            else:
+                items = m.get('items') or []
+                minutes = max(10, int(len(items) * 6))  # fallback: ~6 min per item
+            titles.append(f"{m.get('title', f'Module {i+1}')} • ~{minutes} min")
         idx = st.selectbox("Pick a module", list(range(len(mods))), format_func=lambda i: titles[i])
         picked = mods[idx]
         with st.expander("Selected module payload"):
