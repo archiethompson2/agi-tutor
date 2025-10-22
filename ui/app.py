@@ -119,6 +119,43 @@ def api_session_complete(payload: dict):
     return r.json()
 
 def api_metrics_module(user_id: int, module_id: int):
+def safe_parse_assessment(reply: str):
+    # tolerant fallback parser for [[ASSESSMENT]] blocks
+    # 1. try agi_tutor.agi_agent.split_assessment
+    # 2. try case-insensitive [[assessment]]...[[/assessment]]
+    # 3. try last JSON object in text
+    text, assess = (reply, {})
+    try:
+        from agi_tutor.agi_agent import split_assessment as _sa  # type: ignore
+        text, assess = _sa(reply)
+        if isinstance(assess, dict) and assess:
+            return text, assess
+    except Exception:
+        pass
+    try:
+        pat = re.compile(r"\[\[\s*assessment\s*\]\](.*?)\[\[\s*/\s*assessment\s*\]\]", re.I | re.S)
+        m = pat.search(reply or "")
+        if m:
+            block = m.group(1).strip()
+            assess = json.loads(block)
+            text = pat.sub("", reply).strip()
+            if isinstance(assess, dict):
+                return text, assess
+    except Exception:
+        pass
+    try:
+        last_l = reply.rfind("{")
+        last_r = reply.rfind("}")
+        if last_l != -1 and last_r != -1 and last_r > last_l:
+            cand = reply[last_l:last_r+1]
+            assess = json.loads(cand)
+            text = (reply[:last_l] + reply[last_r+1:]).strip()
+            if isinstance(assess, dict):
+                return text, assess
+    except Exception:
+        pass
+    return reply, {}
+
     r = requests.get(f"{API}/metrics/module", params={"user_id": user_id, "module_id": module_id}, timeout=30)
     r.raise_for_status()
     return r.json()
@@ -332,7 +369,7 @@ if API_MODE:
             except Exception as e:
                 st.error(f"Tutor call failed: {e}")
                 st.stop()
-            text, assess = split_assessment(reply) if split_assessment else (reply, {})
+            text, assess = safe_parse_assessment(reply)
             st.session_state.api_messages.append({"role": "assistant", "content": text or reply})
             try:
                 if isinstance(assess, dict):
@@ -346,7 +383,11 @@ if API_MODE:
                         })
             except Exception:
                 pass
+            st.session_state['__last_assessment__'] = assess if isinstance(assess, dict) else {}
             st.rerun()
+
+        with st.expander('Debug • Last parsed assessment', expanded=False):
+            st.json(st.session_state.get('__last_assessment__', {}))
 
         # --- End Session: persist rollups ---
         st.divider()
