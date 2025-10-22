@@ -10,17 +10,30 @@ try:
     _SRC = _PROJECT_ROOT / "src"
     if str(_SRC) not in sys.path:
         sys.path.insert(0, str(_SRC))
-    from agi_tutor.agi_agent import build_system_prompt, call_model, split_assessment  # type: ignore
+    from agi_tutor.agi_agent import build_system_prompt, call_model, split_assessment, recover_assessment  # type: ignore
 except Exception as e:
     build_system_prompt = None
     call_model = None
     split_assessment = None
+    recover_assessment = None
     _IMPORT_ERR = f"{type(e).__name__}: {e}"
 
 # Tutor status + simulate switch
 TUTOR_READY = bool(build_system_prompt and call_model)
 SIMULATE = (os.getenv("SIMULATE_TUTOR", "0") == "1")
 if SIMULATE:
+    def recover_assessment(messages, assistant_text):
+        # In simulate mode, try to parse again using the tolerant logic below;
+        # if nothing found, synthesize a reasonable default.
+        try:
+            # reuse safe path after it is defined; a no-op fallback is added later
+            pass
+        except Exception:
+            pass
+        return {"item_index": 0, "objective": "Sim objective",
+                "last_response_correct": True, "mastery_estimate": 0.6,
+                "confidence": 0.6, "ready_to_advance": False,
+                "needs_more_practice": True}
     def call_model(msgs):
         last_usr = ""
         for m in msgs[::-1]:
@@ -57,7 +70,7 @@ if SIMULATE:
     TUTOR_READY = True
 
 # ------- Safe / tolerant assessment parser -------
-def safe_parse_assessment(reply: str):
+def safe_parse_assessment(messages, reply: str):
     # Strategy 1: use the agent's official splitter
     try:
         if split_assessment:
@@ -88,6 +101,14 @@ def safe_parse_assessment(reply: str):
             text = (reply[:last_l] + reply[last_r+1:]).strip()
             if isinstance(assess, dict):
                 return text, assess
+    except Exception:
+        pass
+    # Strategy 4: ask the agent to recover just the assessment for this turn
+    try:
+        if 'recover_assessment' in globals() and recover_assessment:
+            recovered = recover_assessment(messages, reply)
+            if isinstance(recovered, dict) and recovered:
+                return reply, recovered
     except Exception:
         pass
     return reply, {}
@@ -338,7 +359,7 @@ if API_MODE:
                 reply = call_model(st.session_state.api_messages)
             except Exception as e:
                 st.error(f"Tutor call failed: {e}"); st.stop()
-            text, assess = safe_parse_assessment(reply)
+            text, assess = safe_parse_assessment(st.session_state.api_messages, reply)
             st.session_state.api_messages.append({"role": "assistant", "content": text or reply})
             try:
                 if isinstance(assess, dict):
