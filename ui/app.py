@@ -1,11 +1,9 @@
-import os, json, requests, streamlit as st
+import os, sys, pathlib, json, requests, streamlit as st, re, email.utils
 
 API = os.getenv("AGI_TUTOR_API_BASE", "https://agi-tutor.onrender.com")
-BUILD_TAG = "UI-build: 2025-10-21-17:55Z"
+BUILD_TAG = "UI-build: 2025-10-22-10:40Z"
 
-# Optional: import the tutor agent for chat handoff
-# Ensure the project src/ is on sys.path (Render/Streamlit sometimes misses it)
-import sys, pathlib, email.utils
+# ------- Agent import (with safe fallbacks) -------
 _IMPORT_ERR = None
 try:
     _PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -19,7 +17,7 @@ except Exception as e:
     split_assessment = None
     _IMPORT_ERR = f"{type(e).__name__}: {e}"
 
-# Tutor status + SIMULATE switch (lets you test chat loop even without OpenAI)
+# Tutor status + simulate switch
 TUTOR_READY = bool(build_system_prompt and call_model)
 SIMULATE = (os.getenv("SIMULATE_TUTOR", "0") == "1")
 if SIMULATE:
@@ -29,109 +27,46 @@ if SIMULATE:
             if m["role"] == "user":
                 last_usr = m["content"]
                 break
-        # Emit a valid [[ASSESSMENT]] block
         return (
             f"Okay — I heard: {last_usr}\n\n"
             "[[ASSESSMENT]]"
             "{"
             "\"item_index\": 0, "
             "\"objective\": \"Sim objective\", "
-            "\"mastery_estimate\": 0.5, "
-            "\"confidence\": 0.5, "
+            "\"mastery_estimate\": 0.6, "
+            "\"confidence\": 0.6, "
             "\"last_response_correct\": true, "
             "\"ready_to_advance\": false, "
             "\"needs_more_practice\": true"
             "}"
             "[[/ASSESSMENT]]"
         )
-    # Minimal inline split to allow SIMULATE without agi_agent import
     if split_assessment is None:
-        import re, json as _json
-        ASSESSMENT_START, ASSESSMENT_END = "[[ASSESSMENT]]", "[[/ASSESSMENT]]"
+        # tiny inline version to keep simulate mode working
         def split_assessment(text: str):
-            pat = re.compile(re.escape(ASSESSMENT_START) + r"(.*?)" + re.escape(ASSESSMENT_END), re.DOTALL)
+            pat = re.compile(re.escape("[[ASSESSMENT]]") + r"(.*?)" + re.escape("[[/ASSESSMENT]]"), re.DOTALL)
             m = pat.search(text or "")
             assess = {}
             if m:
                 try:
-                    assess = _json.loads(m.group(1).strip())
+                    assess = json.loads(m.group(1).strip())
                 except Exception:
                     assess = {}
                 text = pat.sub("", text).strip()
             return text, assess
     TUTOR_READY = True
 
-st.set_page_config(page_title=f"AGI Tutor • {BUILD_TAG}", layout="wide")
-
-# Query params (Streamlit v1.50 has st.query_params)
-try:
-    qp = st.query_params
-except Exception:
-    qp = {}
-
-def qget(name: str, default: str) -> str:
-    try:
-        return qp.get(name, [default])[0]
-    except Exception:
-        return default
-
-API_MODE = qget("api", "0") == "1"
-
-# ------------------- Backend calls -------------------
-def api_signup(name, region, stage, hours_per_session, sessions_per_week, school_year_end):
-    payload = {
-        "name": name,
-        "region": region,
-        "stage": stage,
-        "hours_per_session": hours_per_session,
-        "sessions_per_week": sessions_per_week,
-        "school_year_end": school_year_end,
-    }
-    r = requests.post(f"{API}/signup", json=payload, timeout=30)
-    r.raise_for_status()
-    return int(r.json()["user_id"])
-
-def api_plan(user_id, subject_code, hours_per_week, start_date, end_date):
-    payload = {
-        "user_id": user_id,
-        "subject_code": subject_code,
-        "hours_per_week": hours_per_week,
-        "start_date": start_date,
-        "end_date": end_date,
-    }
-    r = requests.post(f"{API}/plan", json=payload, timeout=45)
-    r.raise_for_status()
-    return r.json()
-
-def api_modules(user_id, subject_code):
-    r = requests.get(f"{API}/modules", params={"user_id": user_id, "subject_code": subject_code}, timeout=30)
-    r.raise_for_status()
-    return r.json().get("modules", [])
-
-def api_session_start(user_id, module_id):
-    r = requests.post(f"{API}/session/start", json={"user_id": user_id, "module_id": module_id}, timeout=45)
-    r.raise_for_status()
-    return r.json()
-
-def api_session_complete(payload: dict):
-    r = requests.post(f"{API}/session/complete", json=payload, timeout=45)
-    r.raise_for_status()
-    return r.json()
-
-def api_metrics_module(user_id: int, module_id: int):
+# ------- Safe / tolerant assessment parser -------
 def safe_parse_assessment(reply: str):
-    # tolerant fallback parser for [[ASSESSMENT]] blocks
-    # 1. try agi_tutor.agi_agent.split_assessment
-    # 2. try case-insensitive [[assessment]]...[[/assessment]]
-    # 3. try last JSON object in text
-    text, assess = (reply, {})
+    # Strategy 1: use the agent's official splitter
     try:
-        from agi_tutor.agi_agent import split_assessment as _sa  # type: ignore
-        text, assess = _sa(reply)
-        if isinstance(assess, dict) and assess:
-            return text, assess
+        if split_assessment:
+            text, assess = split_assessment(reply)  # type: ignore
+            if isinstance(assess, dict) and assess:
+                return text, assess
     except Exception:
         pass
+    # Strategy 2: case-insensitive [[assessment]]...[[/assessment]] tags
     try:
         pat = re.compile(r"\[\[\s*assessment\s*\]\](.*?)\[\[\s*/\s*assessment\s*\]\]", re.I | re.S)
         m = pat.search(reply or "")
@@ -143,6 +78,7 @@ def safe_parse_assessment(reply: str):
                 return text, assess
     except Exception:
         pass
+    # Strategy 3: last JSON object in the string
     try:
         last_l = reply.rfind("{")
         last_r = reply.rfind("}")
@@ -156,14 +92,65 @@ def safe_parse_assessment(reply: str):
         pass
     return reply, {}
 
-    r = requests.get(f"{API}/metrics/module", params={"user_id": user_id, "module_id": module_id}, timeout=30)
-    r.raise_for_status()
+st.set_page_config(page_title=f"AGI Tutor • {BUILD_TAG}", layout="wide")
+
+# Query params helper
+try:
+    qp = st.query_params
+except Exception:
+    qp = {}
+
+def qget(name: str, default: str) -> str:
+    try:
+        return qp.get(name, [default])[0]
+    except Exception:
+        return default
+
+API_MODE = qget("api", "0") == "1"
+
+# ------- Backend calls -------
+def api_signup(name, region, stage, hours_per_session, sessions_per_week, school_year_end):
+    payload = {
+        "name": name,
+        "region": region,
+        "stage": stage,
+        "hours_per_session": hours_per_session,
+        "sessions_per_week": sessions_per_week,
+        "school_year_end": school_year_end,
+    }
+    r = requests.post(f"{API}/signup", json=payload, timeout=30); r.raise_for_status()
+    return int(r.json()["user_id"])
+
+def api_plan(user_id, subject_code, hours_per_week, start_date, end_date):
+    payload = {
+        "user_id": user_id,
+        "subject_code": subject_code,
+        "hours_per_week": hours_per_week,
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+    r = requests.post(f"{API}/plan", json=payload, timeout=45); r.raise_for_status()
     return r.json()
 
-# ------------------- UI -------------------
+def api_modules(user_id, subject_code):
+    r = requests.get(f"{API}/modules", params={"user_id": user_id, "subject_code": subject_code}, timeout=30); r.raise_for_status()
+    return r.json().get("modules", [])
+
+def api_session_start(user_id, module_id):
+    r = requests.post(f"{API}/session/start", json={"user_id": user_id, "module_id": module_id}, timeout=45); r.raise_for_status()
+    return r.json()
+
+def api_session_complete(payload: dict):
+    r = requests.post(f"{API}/session/complete", json=payload, timeout=45); r.raise_for_status()
+    return r.json()
+
+def api_metrics_module(user_id: int, module_id: int):
+    r = requests.get(f"{API}/metrics/module", params={"user_id": user_id, "module_id": module_id}, timeout=30); r.raise_for_status()
+    return r.json()
+
+# ------- UI -------
 st.title(f"AGI Tutor • {BUILD_TAG}")
 
-# Sidebar: persistent status for tutor agent config
 with st.sidebar:
     st.caption(
         f"Tutor status — ready: {TUTOR_READY} • "
@@ -171,7 +158,6 @@ with st.sidebar:
         f"key: {'set' if os.getenv('OPENAI_API_KEY') else 'missing'} • "
         f"simulate: {SIMULATE}"
     )
-    # Show why tutor is disabled if not in SIMULATE mode
     if not TUTOR_READY and os.getenv('SIMULATE_TUTOR','0') != '1':
         if _IMPORT_ERR:
             st.warning(f"Agent import failed: {_IMPORT_ERR}")
@@ -179,7 +165,7 @@ with st.sidebar:
             st.warning('OPENAI_API_KEY is missing on the UI service.')
 
 if API_MODE:
-    # Read from query string but expose inputs so params can be fixed in UI
+    # Defaults from query
     default_subject = qget("subject_code", "maths")
     default_hpw = float(qget("hours_per_week", "2"))
     default_spw = int(qget("sessions_per_week", "2"))
@@ -189,7 +175,7 @@ if API_MODE:
     default_region = qget("region", "Wales")
     default_stage = qget("stage", "Year 8")
 
-    # Session-state init: always present so chat loop cannot break
+    # Session state init
     if "user_id" not in st.session_state:
         try:
             st.session_state.user_id = int(qp.get("user_id", [0])[0])
@@ -204,7 +190,7 @@ if API_MODE:
     if "module_meta" not in st.session_state:
         st.session_state.module_meta = {"title": "", "items_total": 0}
 
-    # --- Sidebar learner fields
+    # Sidebar learner fields
     with st.sidebar:
         st.header("Learner")
         name = st.text_input("Name", default_name)
@@ -219,7 +205,7 @@ if API_MODE:
 
     col1, col2 = st.columns([2, 3])
 
-    # -------- Left: create/ensure ----------
+    # Left: create/ensure
     with col1:
         st.subheader("Create / ensure")
 
@@ -232,11 +218,9 @@ if API_MODE:
                 st.query_params["user_id"] = str(st.session_state.user_id)
                 st.success(f"user_id = {st.session_state.user_id}")
             except requests.HTTPError as e:
-                st.error(f"/signup failed: {e.response.text}")
-                st.stop()
+                st.error(f"/signup failed: {e.response.text}"); st.stop()
             except Exception as e:
-                st.error(f"/signup failed: {e}")
-                st.stop()
+                st.error(f"/signup failed: {e}"); st.stop()
 
         plan_payload = {
             "user_id": int(st.session_state.user_id or 0),
@@ -250,27 +234,22 @@ if API_MODE:
 
         if st.button("Ensure plan"):
             try:
-                api_plan(**plan_payload)
-                st.success("Plan ensured")
+                api_plan(**plan_payload); st.success("Plan ensured")
             except requests.HTTPError as e:
-                st.error(f"/plan failed: {e.response.text}")
-                st.stop()
+                st.error(f"/plan failed: {e.response.text}"); st.stop()
             except Exception as e:
-                st.error(f"/plan failed: {e}")
-                st.stop()
+                st.error(f"/plan failed: {e}"); st.stop()
 
-    # -------- Right: modules + session ----------
+    # Right: modules + session
     with col2:
         st.subheader("Modules")
         try:
             mods = api_modules(st.session_state.user_id, subject_code)
         except Exception as e:
-            st.error(f"fetch modules failed: {e}")
-            mods = []
+            st.error(f"fetch modules failed: {e}"); mods = []
 
         if not mods:
-            st.info("No modules yet. Click Ensure plan.")
-            st.stop()
+            st.info("No modules yet. Click Ensure plan."); st.stop()
 
         titles = [m.get("title", f"Module {i+1}") for i, m in enumerate(mods)]
         idx = st.selectbox("Pick a module", list(range(len(mods))), format_func=lambda i: titles[i])
@@ -283,19 +262,15 @@ if API_MODE:
             try:
                 sess = api_session_start(user_id=st.session_state.user_id, module_id=picked["id"])
             except requests.HTTPError as e:
-                st.error(f"/session/start failed: {e.response.text}")
-                st.stop()
+                st.error(f"/session/start failed: {e.response.text}"); st.stop()
             except Exception as e:
-                st.error(f"/session/start failed: {e}")
-                st.stop()
+                st.error(f"/session/start failed: {e}"); st.stop()
 
-            st.success("Session payload")
-            st.json(sess)
+            st.success("Session payload"); st.json(sess)
             st.caption("This is your module/session JSON from the backend.")
 
             if not TUTOR_READY:
-                st.warning("Tutor agent is disabled. Set OPENAI_API_KEY on the UI service and redeploy (or SIMULATE_TUTOR=1).")
-                st.stop()
+                st.warning("Tutor agent is disabled. Set OPENAI_API_KEY on the UI service and redeploy (or SIMULATE_TUTOR=1)."); st.stop()
 
             if build_system_prompt and call_model:
                 module = sess.get("module", {})
@@ -315,22 +290,18 @@ if API_MODE:
                 st.session_state.progress = {
                     "module_id": picked["id"],
                     "items": [{"objective": it.get("objective",""), "events": []} for it in items],
-                    "started_at": email.utils.formatdate(usegmt=False)
+                    "started_at": email.utils.formatdate(usegmt=False),
                 }
                 st.session_state.module_meta = {"title": module.get("title",""), "items_total": len(items)}
                 try:
-                    # clear autostart=1 so future reruns don't reset the chat
-                    try:
-                        st.query_params["autostart"] = "0"
-                    except Exception:
-                        pass
+                    try: st.query_params["autostart"] = "0"
+                    except Exception: pass
                     first = call_model(st.session_state.api_messages)
                 except Exception as e:
-                    st.error(f"Tutor call failed on first turn: {e}")
-                    st.stop()
+                    st.error(f"Tutor call failed on first turn: {e}"); st.stop()
                 st.session_state.api_messages.append({"role": "assistant", "content": first})
 
-    # -------- Chat area (always visible once messages exist) ----------
+    # -------- Chat area --------
     if TUTOR_READY and st.session_state.get("api_messages") and call_model:
         st.divider()
         left, right = st.columns([3,2])
@@ -354,7 +325,6 @@ if API_MODE:
             try:
                 st.progress(int(prog_ratio * 100), text=f"{mastered}/{items_total} mastered")
             except TypeError:
-                # older streamlit versions don't support the text= param
                 st.progress(int(prog_ratio * 100))
             st.caption(f"**Progress** · {mastered}/{items_total} mastered • avg confidence {avg_conf:.2f}")
 
@@ -367,8 +337,7 @@ if API_MODE:
             try:
                 reply = call_model(st.session_state.api_messages)
             except Exception as e:
-                st.error(f"Tutor call failed: {e}")
-                st.stop()
+                st.error(f"Tutor call failed: {e}"); st.stop()
             text, assess = safe_parse_assessment(reply)
             st.session_state.api_messages.append({"role": "assistant", "content": text or reply})
             try:
@@ -424,8 +393,7 @@ if API_MODE:
                 "events": events_payload,
             }
             try:
-                api_session_complete(payload)
-                st.success("Session saved.")
+                api_session_complete(payload); st.success("Session saved.")
                 try:
                     m = api_metrics_module(st.session_state.user_id, prog.get("module_id") or 0)
                     st.info(
@@ -438,7 +406,7 @@ if API_MODE:
             except Exception as e:
                 st.error(f"/session/complete failed: {e}")
 
-# -------- Local demo fallback --------
+# Local demo fallback
 if not API_MODE:
     st.info("Run with `?api=1` to use the backend service. Example:")
     st.code(".../app?api=1&subject_code=maths&hours_per_week=2&sessions_per_week=2&autostart=1")
