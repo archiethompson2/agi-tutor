@@ -71,15 +71,32 @@ if SIMULATE:
 
 # ------- Safe / tolerant assessment parser -------
 def safe_parse_assessment(messages, reply: str):
-    # Strategy 1: use the agent's official splitter
+    """Parse [[ASSESSMENT]]; if missing or incomplete, ask the agent to recover it."""
+    import json, re
+    required = {"item_index","objective","mastery_estimate","confidence","last_response_correct","ready_to_advance","needs_more_practice"}
+
+    def _validate(d):
+        if not isinstance(d, dict): return False
+        if not required.issubset(set(d.keys())): return False
+        # coerce numeric fields
+        try:
+            d["mastery_estimate"] = float(d.get("mastery_estimate", 0.0) or 0.0)
+            d["confidence"] = float(d.get("confidence", 0.0) or 0.0)
+            d["item_index"] = int(d.get("item_index", 0) or 0)
+        except Exception:
+            return False
+        return True
+
+    # Strategy 1: official splitter if available
     try:
         if split_assessment:
             text, assess = split_assessment(reply)  # type: ignore
-            if isinstance(assess, dict) and assess:
+            if _validate(assess): 
                 return text, assess
     except Exception:
         pass
-    # Strategy 2: case-insensitive [[assessment]]...[[/assessment]] tags
+
+    # Strategy 2: tolerant tags [[assessment]]...[[/assessment]]
     try:
         pat = re.compile(r"\[\[\s*assessment\s*\]\](.*?)\[\[\s*/\s*assessment\s*\]\]", re.I | re.S)
         m = pat.search(reply or "")
@@ -87,31 +104,34 @@ def safe_parse_assessment(messages, reply: str):
             block = m.group(1).strip()
             assess = json.loads(block)
             text = pat.sub("", reply).strip()
-            if isinstance(assess, dict):
+            if _validate(assess):
                 return text, assess
     except Exception:
         pass
+
     # Strategy 3: last JSON object in the string
     try:
-        last_l = reply.rfind("{")
-        last_r = reply.rfind("}")
+        last_l = reply.rfind("{"); last_r = reply.rfind("}")
         if last_l != -1 and last_r != -1 and last_r > last_l:
             cand = reply[last_l:last_r+1]
             assess = json.loads(cand)
             text = (reply[:last_l] + reply[last_r+1:]).strip()
-            if isinstance(assess, dict):
+            if _validate(assess):
                 return text, assess
     except Exception:
         pass
-    # Strategy 4: ask the agent to recover just the assessment for this turn
+
+    # Strategy 4: call the agent to recover the block
     try:
         if 'recover_assessment' in globals() and recover_assessment:
             recovered = recover_assessment(messages, reply)
-            if isinstance(recovered, dict) and recovered:
+            if _validate(recovered):
                 return reply, recovered
     except Exception:
         pass
+
     return reply, {}
+
 
 st.set_page_config(page_title=f"AGI Tutor • {BUILD_TAG}", layout="wide")
 
@@ -272,7 +292,12 @@ if API_MODE:
         if not mods:
             st.info("No modules yet. Click Ensure plan."); st.stop()
 
-        titles = [m.get("title", f"Module {i+1}") for i, m in enumerate(mods)]
+        def _mins(m):
+    if 'estimated_minutes' in m and isinstance(m['estimated_minutes'], (int,float)):
+        return int(m['estimated_minutes'])
+    items = m.get('items', [])
+    return max(10, int(len(items) * 6))  # fallback: ~6 min per item
+titles = [f"{m.get('title', f'Module {i+1}')} • ~{_mins(m)} min" for i, m in enumerate(mods)]
         idx = st.selectbox("Pick a module", list(range(len(mods))), format_func=lambda i: titles[i])
         picked = mods[idx]
         with st.expander("Selected module payload"):
@@ -338,7 +363,7 @@ if API_MODE:
                     confidences.extend([e.get("confidence",0.0) for e in it["events"]])
                     recent = it["events"][-2:]
                     mean_recent = sum(e.get("confidence",0.0) for e in recent) / len(recent)
-                    if mean_recent >= 0.70:
+                    if mean_recent >= 0.70 and (sum((e.get('mastery_estimate', 0.0) or 0.0) for e in recent) / len(recent)) >= 0.70:
                         mastered += 1
             avg_conf = (sum(confidences)/len(confidences)) if confidences else 0.0
             # progress bar + badge
@@ -400,7 +425,7 @@ if API_MODE:
                 if evs:
                     recent = evs[-2:]
                     mean_recent = sum(e.get("confidence",0.0) for e in recent)/len(recent)
-                    if mean_recent >= 0.70:
+                    if mean_recent >= 0.70 and (sum((e.get('mastery_estimate', 0.0) or 0.0) for e in recent) / len(recent)) >= 0.70:
                         mastered += 1
             avg_conf = (sum(confidences)/len(confidences)) if confidences else 0.0
             payload = {
